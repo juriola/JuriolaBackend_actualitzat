@@ -185,7 +185,7 @@ export async function getDeviceHistory(
 ) {
 
   const path =
-    `/v2.1/cloud/thing/${deviceId}/report-logs` +
+    `/v2.0/cloud/thing/${deviceId}/report-logs` +
     `?codes=${encodeURIComponent(code)}` +
     `&start_time=${startTime}` +
     `&end_time=${endTime}` +
