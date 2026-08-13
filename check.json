@@ -1,0 +1,107 @@
+﻿{
+  "users": [
+    {
+      "id": "user-1786609224135",
+      "username": "juriola",
+      "passwordHash": "$2a$10$MyhE/D5h4hjbECASFKIXouOlBZdoNp8UDpdfb0oFf1kQy1CAVsM.S",
+      "role": "client",
+      "boatId": "juriola"
+    },
+    {
+      "id": "user-1786615997984",
+      "username": "admin",
+      "passwordHash": "$2a$10$yeMYjBxaWQnefnRjeRGI6OAiFxsZw.cgat1lvW8ZYKshJ1UDiayjK",
+      "role": "admin",
+      "boatId": null
+    }
+  ],
+  "boats": [
+    {
+      "id": "juriola",
+      "name": "Juriola",
+      "tuya": {
+        "uid": "eu17431896755486VHQw"
+      },
+      "devices": [
+        {
+          "id": "temp-nevera",
+          "name": "Temperatura nevera",
+          "type": "sensor",
+          "source": "tuya",
+          "tuya_device_id": "bfc0ff8e4c2b8413add3tf",
+          "params": {
+            "temperature_code": "va_temperature",
+            "humidity_code": "va_humidity"
+          }
+        },
+        {
+          "id": "interruptor-nevera",
+          "name": "Interruptor nevera",
+          "type": "switch",
+          "source": "tuya",
+          "tuya_device_id": "bf91907700f896ee46kbr9",
+          "params": {
+            "command_code": "switch_1"
+          }
+        },
+        {
+          "id": "device-1786613053254",
+          "name": "Interruptor nevera",
+          "type": "device",
+          "source": "tuya",
+          "tuya_device_id": "interruptor-nevera",
+          "params": {}
+        },
+        {
+          "id": "device-1786613113651",
+          "name": "Temperatura nevera",
+          "type": "device",
+          "source": "tuya",
+          "tuya_device_id": "temp-nevera",
+          "params": {}
+        },
+        {
+          "id": "device-1786616269477",
+          "name": "Impressora 3D",
+          "type": "device",
+          "source": "tuya",
+          "tuya_device_id": "bf27367131707fd8f7uqee",
+          "params": {}
+        },
+        {
+          "id": "device-1786620194563",
+          "name": "Smart Camera",
+          "type": "device",
+          "source": "tuya",
+          "tuya_device_id": "bfa1a7d5b0838091a3aguo",
+          "params": {}
+        },
+        {
+          "id": "device-1786620230010",
+          "name": "Reg principal",
+          "type": "device",
+          "source": "tuya",
+          "tuya_device_id": "bffc0edcabd46b83bciges",
+          "params": {}
+        }
+      ],
+      "gadgets": [
+        {
+          "id": "gadget-1786625085152",
+          "type": "temperature",
+          "title": "Tª Nevera",
+          "source": "tuya",
+          "device_id": "temp-nevera",
+          "code": "va_temperature",
+          "unit": "°C",
+          "enabled": true,
+          "col": 0,
+          "row": 0,
+          "colSpan": 1,
+          "rowSpan": 1
+        }
+      ]
+    }
+  ]
+}
+
