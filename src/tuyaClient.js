@@ -47,6 +47,17 @@ export class TuyaClient {
   async request(method, path, body, accessToken = '') {
     const url = new URL(path, this.baseUrl);
 
+    // Tuya exigeix que els paràmetres de query estiguin ordenats per
+    // codi ASCII, tant a la URL real com al càlcul de la signatura.
+    // Si no coincideixen, l'API respon "sign invalid" (codi 1004).
+    if ([...url.searchParams.keys()].length > 0) {
+      const sortedEntries = [...url.searchParams.entries()].sort(
+        ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)
+      );
+
+      url.search = new URLSearchParams(sortedEntries).toString();
+    }
+
     const bodyText =
       body === undefined ? '' : JSON.stringify(body);
 
