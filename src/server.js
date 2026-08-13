@@ -17,6 +17,7 @@ import {
   addGadget,
   updateGadget,
   deleteGadget,
+  initDb,
   getUserByUsername,
   GRID_COLUMNS
 } from './store.js';
@@ -630,12 +631,19 @@ const port = Number(
   process.env.PORT || 3000
 );
 
-app.listen(
-  port,
-  '0.0.0.0',
-  () => {
-    console.log(
-      `Juriola Backend escoltant a http://0.0.0.0:${port}`
+initDb()
+  .then(() => {
+    app.listen(
+      port,
+      '0.0.0.0',
+      () => {
+        console.log(
+          `Juriola Backend escoltant a http://0.0.0.0:${port}`
+        );
+      }
     );
-  }
-);
+  })
+  .catch(err => {
+    console.error('No s\'ha pogut inicialitzar la base de dades:', err);
+    process.exit(1);
+  });

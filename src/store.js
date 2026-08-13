@@ -1,11 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, '..', 'data');
-const file = path.join(dataDir, 'db.json');
-
 const seed = {
   users: [],
 
@@ -21,135 +13,123 @@ const seed = {
         uid: null
       },
 
-      devices: [
-        {
-          id: 'temp-nevera',
-          name: 'Temperatura nevera',
-          type: 'sensor',
-          source: 'tuya',
-          tuya_device_id: 'bfc0ff8e4c2b8413add3tf',
-          params: {
-            temperature_code: 'va_temperature',
-            humidity_code: 'va_humidity'
-          }
-        },
+      devices: [],
 
-        {
-          id: 'interruptor-nevera',
-          name: 'Interruptor nevera',
-          type: 'switch',
-          source: 'tuya',
-          tuya_device_id: 'bf91907700f896ee46kbr9',
-          params: {
-            command_code: 'switch_1'
-          }
-        }
-      ],
-
-      gadgets: [
-        {
-          id: 'temperatura-nevera',
-          type: 'temperature',
-          title: 'TEMPERATURA NEVERA',
-          source: 'tuya',
-          device_id: 'temp-nevera',
-          code: 'va_temperature',
-          unit: '°C',
-          enabled: true,
-          col: 0,
-          row: 0,
-          colSpan: 1,
-          rowSpan: 1
-        },
-
-        {
-          id: 'historico-nevera',
-          type: 'temperature_history',
-          title: 'ÚLTIMES 6 HORES',
-          source: 'tuya',
-          device_id: 'temp-nevera',
-          code: 'va_temperature',
-          unit: '°C',
-          hours: 6,
-          enabled: true,
-          col: 1,
-          row: 0,
-          colSpan: 2,
-          rowSpan: 1
-        },
-
-        {
-          id: 'humitat-nevera',
-          type: 'humidity',
-          title: 'HUMITAT',
-          source: 'tuya',
-          device_id: 'temp-nevera',
-          code: 'va_humidity',
-          unit: '%',
-          enabled: true,
-          col: 3,
-          row: 0,
-          colSpan: 1,
-          rowSpan: 1
-        },
-
-        {
-          id: 'interruptor-nevera',
-          type: 'switch',
-          title: 'INTERRUPTOR NEVERA',
-          source: 'tuya',
-          device_id: 'interruptor-nevera',
-          code: 'switch_1',
-          enabled: true,
-          col: 0,
-          row: 1,
-          colSpan: 1,
-          rowSpan: 1
-        }
-      ]
+      gadgets: []
     }
   ]
 };
 
 
 // ─────────────────────────────────────────────
-// DATABASE
+// PERSISTÈNCIA: UPSTASH REDIS (gratuït i persistent)
 // ─────────────────────────────────────────────
+//
+// Render Free no permet discs persistents: qualsevol fitxer local
+// (com abans data/db.json) desapareix a cada reinici/spin-down. Per
+// no dependre de cap pla de pagament, la "base de dades" ara viu a
+// Upstash (Redis amb API REST, gratuït) com UN sol valor JSON.
+//
+// Per no haver de convertir totes les funcions d'aquest fitxer (i
+// totes les rutes de server.js) a async, es manté una còpia en
+// memòria (`dbCache`) que és amb qui treballen `load()`/`save()` de
+// forma síncrona, tal com sempre. `save()` sí que dispara en
+// segon pla (sense esperar) l'escriptura real a Upstash.
+//
+// Cal definir aquestes variables d'entorn a Render:
+//   UPSTASH_REDIS_REST_URL
+//   UPSTASH_REDIS_REST_TOKEN
+//
 
-function ensure() {
-  fs.mkdirSync(dataDir, { recursive: true });
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const DB_KEY = 'juriola:db';
 
-  if (!fs.existsSync(file)) {
-    fs.writeFileSync(
-      file,
-      JSON.stringify(seed, null, 2)
+let dbCache = null;
+
+async function fetchFromUpstash() {
+  const res = await fetch(
+    `${UPSTASH_URL}/get/${DB_KEY}`,
+    { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` } }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Upstash GET ha fallat: ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  return data.result
+    ? JSON.parse(data.result)
+    : null;
+}
+
+
+function pushToUpstash(db) {
+  fetch(
+    `${UPSTASH_URL}/set/${DB_KEY}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${UPSTASH_TOKEN}`,
+        'Content-Type': 'text/plain',
+      },
+      body: JSON.stringify(db),
+    }
+  ).catch(err => {
+    console.error('[store] Error desant a Upstash:', err);
+  });
+}
+
+
+/**
+ * Cal cridar-la un sol cop, a l'arrencada del servidor (server.js),
+ * abans d'acceptar cap petició. Carrega les dades reals des
+ * d'Upstash; si encara no n'hi ha (primer arrencada), sembra amb
+ * `seed` i el puja.
+ */
+export async function initDb() {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+    console.error(
+      '[store] Falten UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN. ' +
+      'Les dades NOMÉS viuran en memòria i es perdran al reiniciar.'
     );
+    dbCache = structuredClone(seed);
+    dbCache.users = [];
+    return;
+  }
+
+  const remote = await fetchFromUpstash().catch(err => {
+    console.error('[store] No s\'ha pogut llegir Upstash, s\'usa el seed local:', err);
+    return null;
+  });
+
+  dbCache = remote || structuredClone(seed);
+
+  if (!Array.isArray(dbCache.users)) {
+    dbCache.users = [];
+  }
+
+  if (!remote) {
+    pushToUpstash(dbCache);
   }
 }
 
 
 function load() {
-  ensure();
-
-  const db = JSON.parse(
-    fs.readFileSync(file, 'utf8')
-  );
-
-  // Migració suau: si el db.json ja existia d'abans d'afegir
-  // autenticació, li afegim la col·lecció 'users' buida.
-  if (!Array.isArray(db.users)) {
-    db.users = [];
+  if (!dbCache) {
+    throw new Error(
+      "store.js: cal cridar initDb() a l'arrencada (server.js) abans de fer servir cap funció."
+    );
   }
 
-  return db;
+  return dbCache;
 }
 
 
 function save(db) {
-  fs.writeFileSync(
-    file,
-    JSON.stringify(db, null, 2)
-  );
+  dbCache = db;
+  pushToUpstash(db);
 }
 
 

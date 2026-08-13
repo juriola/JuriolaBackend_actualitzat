@@ -198,6 +198,13 @@ export async function getDeviceHistory(
     result?.list ||
     [];
 
+  if (logs.length === 0) {
+    console.warn(
+      `[tuyaAdapter] Cap punt d'històric per a device=${deviceId} code=${code}. ` +
+      `Resposta de Tuya: ${JSON.stringify(result)}`
+    );
+  }
+
   return logs
     .map(item => ({
       code: item.code,
