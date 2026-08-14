@@ -255,6 +255,42 @@ export function getOrCreateDeviceByTuyaId(
 }
 
 
+/**
+ * Càmera (o altre dispositiu) que NO passa per Tuya: es guarda la URL
+ * RTSP directament. Útil per càmeres genèriques (YESYAMO i similars)
+ * que exposen vídeo per RTSP a la xarxa local del vaixell.
+ */
+export function addRtspDevice(
+  boatId,
+  { name, rtspUrl }
+) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  const device = {
+    id: `device-${Date.now()}`,
+    name: name || 'Càmera',
+    type: 'device',
+    source: 'rtsp',
+    tuya_device_id: null,
+    params: { url: rtspUrl },
+  };
+
+  boat.devices.push(device);
+
+  save(db);
+
+  return device;
+}
+
+
 // ─────────────────────────────────────────────
 // UID TUYA (per vaixell/client)
 // ─────────────────────────────────────────────

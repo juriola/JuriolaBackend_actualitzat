@@ -8,6 +8,7 @@ import {
   getDevice,
   getDevices,
   getOrCreateDeviceByTuyaId,
+  addRtspDevice,
   getGadgets,
   getLocalInstruments,
   getBoatTuyaUid,
@@ -26,6 +27,7 @@ import {
   getAvailableInstruments,
   getDeviceHistory,
   getDeviceStatus,
+  getLiveStreamUrl,
   sendCommand
 } from './tuyaAdapter.js';
 
@@ -292,6 +294,47 @@ app.post('/boats/:boatId/devices', requireAuth, requireBoatAccess, (req, res) =>
 });
 
 
+// ─────────────────────────────────────────────
+// CÀMERA RTSP (no-Tuya): crea dispositiu + gadget
+// de tipus "camera" en un sol pas.
+// ─────────────────────────────────────────────
+
+app.post('/boats/:boatId/devices/rtsp-camera', requireAuth, requireBoatAccess, (req, res) => {
+  const { name, rtsp_url } = req.body || {};
+
+  if (!rtsp_url) {
+    return res.status(400).json({
+      error: "Cal indicar 'rtsp_url'"
+    });
+  }
+
+  const device = addRtspDevice(
+    req.params.boatId,
+    { name, rtspUrl: rtsp_url }
+  );
+
+  if (!device) {
+    return res.status(404).json({
+      error: 'Vaixell no trobat'
+    });
+  }
+
+  const gadget = addGadget(
+    req.params.boatId,
+    {
+      type: 'camera',
+      title: device.name,
+      source: 'rtsp',
+      device_id: device.id,
+      code: '',
+      unit: '',
+    }
+  );
+
+  res.status(201).json({ device, gadget });
+});
+
+
 app.get(
   '/boats/:boatId/devices/:deviceId/status',
   requireAuth, requireBoatAccess,
@@ -410,6 +453,70 @@ app.get(
       );
 
       res.json(history);
+
+    } catch (e) {
+      console.error(e);
+
+      res.status(502).json({
+        error: e.message
+      });
+    }
+  }
+);
+
+
+// ─────────────────────────────────────────────
+// CÀMERA: URL DE STREAMING EN DIRECTE
+// ─────────────────────────────────────────────
+//
+// Retorna una URL HLS temporal (caduca al cap d'uns minuts): cal
+// demanar-ne una de nova cada cop que s'obre la pantalla de la càmera.
+//
+
+app.get(
+  '/boats/:boatId/devices/:deviceId/stream',
+  requireAuth, requireBoatAccess,
+  async (req, res) => {
+    try {
+      const device = getDevice(
+        req.params.boatId,
+        req.params.deviceId
+      );
+
+      if (!device) {
+        return res.status(404).json({
+          error: 'Dispositiu no trobat'
+        });
+      }
+
+      // Càmera RTSP pròpia (no-Tuya): la URL ja la tenim desada, no cal
+      // demanar res a cap API externa.
+      if (device.source === 'rtsp') {
+        const rtspUrl = device.params?.url;
+
+        if (!rtspUrl) {
+          return res.status(502).json({
+            error: 'Aquest dispositiu no té cap URL RTSP configurada'
+          });
+        }
+
+        return res.json({ url: rtspUrl });
+      }
+
+      const type = req.query.type || 'hls';
+
+      const url = await getLiveStreamUrl(
+        device.tuya_device_id,
+        type
+      );
+
+      if (!url) {
+        return res.status(502).json({
+          error: 'Tuya no ha retornat cap URL de streaming'
+        });
+      }
+
+      res.json({ url });
 
     } catch (e) {
       console.error(e);
