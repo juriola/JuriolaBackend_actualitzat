@@ -88,6 +88,9 @@ export async function getDeviceStatus(deviceId) {
 }
 
 
+// Categories de producte de Tuya que són càmeres (streaming de vídeo).
+const CAMERA_CATEGORIES = ['sp'];
+
 export async function getAvailableInstruments(boat) {
 
   const uid = boat?.tuya?.uid;
@@ -125,6 +128,25 @@ export async function getAvailableInstruments(boat) {
       continue;
     }
 
+    // Les càmeres es tracten a banda: no interessa cap "status" (data
+    // point) concret, sinó el dispositiu sencer com a font de streaming.
+    if (CAMERA_CATEGORIES.includes(info.category)) {
+      instruments.push({
+        id: `${device.id}:camera`,
+        source: 'tuya',
+        deviceId: device.id,
+        deviceName: info.name || device.name,
+        code: '',
+        type: 'camera',
+        unit: '',
+        value: null,
+        online: info.online ?? device.online,
+        title: `${info.name || device.name} (Càmera)`,
+      });
+
+      continue;
+    }
+
     for (const status of info?.status || []) {
 
       instruments.push({
@@ -158,6 +180,21 @@ export async function getAvailableInstruments(boat) {
 }
 
 
+/**
+ * Demana a Tuya una URL temporal de streaming en directe (HLS) per a una
+ * càmera. La URL caduca al cap d'uns minuts, així que cal demanar-ne una
+ * de nova cada cop que s'obre la pantalla de la càmera (no es desa).
+ */
+export async function getLiveStreamUrl(deviceId, type = 'hls') {
+  const result = await client.post(
+    `/v1.0/devices/${deviceId}/stream/actions/allocate`,
+    { type }
+  );
+
+  return result?.url || null;
+}
+
+
 export async function sendCommand(
   deviceId,
   code,
@@ -184,28 +221,54 @@ export async function getDeviceHistory(
   endTime
 ) {
 
-  const path =
-    `/v2.0/cloud/thing/${deviceId}/report-logs` +
-    `?codes=${encodeURIComponent(code)}` +
-    `&start_time=${startTime}` +
-    `&end_time=${endTime}` +
-    `&size=100`;
+  // Tuya només retorna com a màxim ~100 punts per crida. Per rangs llargs
+  // (7D, 30D) cal anar paginant amb `last_row_key` fins a aplegar prou
+  // punts o esgotar les pàgines — si no, sempre es veuen només els ~100
+  // punts més recents, sigui quin sigui el rang demanat.
+  const MAX_PAGES = 10;
+  const PAGE_SIZE = 100;
 
-  const result = await client.get(path);
+  let allLogs = [];
+  let lastRowKey = '';
 
-  const logs =
-    result?.logs ||
-    result?.list ||
-    [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const path =
+      `/v2.0/cloud/thing/${deviceId}/report-logs` +
+      `?codes=${encodeURIComponent(code)}` +
+      `&start_time=${startTime}` +
+      `&end_time=${endTime}` +
+      `&size=${PAGE_SIZE}` +
+      `&last_row_key=${encodeURIComponent(lastRowKey)}`;
 
-  if (logs.length === 0) {
+    const result = await client.get(path);
+
+    const logs =
+      result?.logs ||
+      result?.list ||
+      [];
+
+    allLogs = allLogs.concat(logs);
+
+    const hasMore =
+      result?.has_more === true &&
+      !!result?.last_row_key &&
+      logs.length > 0;
+
+    if (!hasMore) {
+      break;
+    }
+
+    lastRowKey = result.last_row_key;
+  }
+
+  if (allLogs.length === 0) {
     console.warn(
-      `[tuyaAdapter] Cap punt d'històric per a device=${deviceId} code=${code}. ` +
-      `Resposta de Tuya: ${JSON.stringify(result)}`
+      `[tuyaAdapter] Cap punt d'històric per a device=${deviceId} code=${code} ` +
+      `entre ${startTime} i ${endTime}.`
     );
   }
 
-  return logs
+  return allLogs
     .map(item => ({
       code: item.code,
 
