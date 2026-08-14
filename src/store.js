@@ -575,6 +575,11 @@ export function addGadget(
     unit:
       gadget.unit || '',
 
+    // "simple" (targeta petita) o "detailed" (targeta gran amb
+    // valor+gràfica+alarmes+interruptor, integrada al panell).
+    displayMode:
+      gadget.displayMode || 'simple',
+
     enabled:
       gadget.enabled !== false,
 

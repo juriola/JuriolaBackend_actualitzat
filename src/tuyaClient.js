@@ -102,6 +102,10 @@ export class TuyaClient {
     if (!response.ok || data.success === false) {
       const code = data.code ? ` [${data.code}]` : '';
 
+      console.error(
+        `[tuyaClient] Error a ${method} ${url.pathname}${url.search} → ${JSON.stringify(data)}`
+      );
+
       throw new Error(
         `Tuya API${code}: ${data.msg || data.message || response.statusText}`
       );
