@@ -15,7 +15,9 @@ const seed = {
 
       devices: [],
 
-      gadgets: []
+      gadgets: [],
+
+      victronDevices: []
     }
   ]
 };
@@ -284,6 +286,124 @@ export function addRtspDevice(
   };
 
   boat.devices.push(device);
+
+  save(db);
+
+  return device;
+}
+
+
+// ─────────────────────────────────────────────
+// VICTRON (dispositius BLE via ESP32 gateway)
+// ─────────────────────────────────────────────
+//
+// A diferència de Tuya, aquí no hi ha cap API cloud: les dades venen
+// d'un ESP32 al vaixell que escolta el Bluetooth del dispositiu Victron
+// (SmartSolar, etc.) i les reenvia xifrades al backend (victronDecoder.js
+// les desxifra). Per poder-ho fer calen la MAC del dispositiu i la seva
+// clau de xifratge (treta manualment de VictronConnect).
+//
+
+export function configureVictronDevice(
+  boatId,
+  { mac, encryptionKey, name }
+) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  if (!Array.isArray(boat.victronDevices)) {
+    boat.victronDevices = [];
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let config = boat.victronDevices.find(
+    d => d.mac === normalizedMac
+  );
+
+  if (config) {
+    config.encryptionKey = encryptionKey;
+    config.name = name || config.name;
+  } else {
+    config = {
+      mac: normalizedMac,
+      encryptionKey,
+      name: name || 'Victron SmartSolar'
+    };
+
+    boat.victronDevices.push(config);
+  }
+
+  save(db);
+
+  return config;
+}
+
+
+export function getVictronDeviceConfig(boatId, mac) {
+  const boat = getBoat(boatId);
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  return (boat.victronDevices || []).find(
+    d => d.mac === normalizedMac
+  ) || null;
+}
+
+
+/**
+ * Desa la lectura més recent d'un dispositiu Victron com un 'device' més
+ * del vaixell (mateix esperit que els devices Tuya/RTSP), creant-lo si
+ * encara no existeix.
+ */
+export function updateVictronReading(boatId, mac, status) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let device = boat.devices.find(
+    d => d.source === 'victron' && d.mac === normalizedMac
+  );
+
+  if (!device) {
+    const config = (boat.victronDevices || []).find(
+      d => d.mac === normalizedMac
+    );
+
+    device = {
+      id: `device-victron-${normalizedMac.replace(/:/g, '')}`,
+      name: config?.name || 'Victron SmartSolar',
+      type: 'device',
+      source: 'victron',
+      mac: normalizedMac,
+      tuya_device_id: null,
+      params: {},
+    };
+
+    boat.devices.push(device);
+  }
+
+  device.lastUpdate = new Date().toISOString();
+  device.status = status;
 
   save(db);
 

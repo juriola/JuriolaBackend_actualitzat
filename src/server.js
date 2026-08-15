@@ -20,7 +20,10 @@ import {
   deleteGadget,
   initDb,
   getUserByUsername,
-  GRID_COLUMNS
+  GRID_COLUMNS,
+  configureVictronDevice,
+  getVictronDeviceConfig,
+  updateVictronReading
 } from './store.js';
 
 import {
@@ -30,6 +33,8 @@ import {
   getLiveStreamUrl,
   sendCommand
 } from './tuyaAdapter.js';
+
+import { parseVictronAdvertisement } from './victronDecoder.js';
 
 import {
   verifyPassword,
@@ -527,6 +532,109 @@ app.get(
     }
   }
 );
+
+
+// ─────────────────────────────────────────────
+// VICTRON
+// ─────────────────────────────────────────────
+//
+// L'ESP32 gateway del vaixell NO va autenticat amb JWT (no és un
+// usuari): es protegeix amb una clau senzilla per header, si es
+// configura VICTRON_GATEWAY_KEY a l'entorn.
+//
+
+app.post('/boats/:boatId/victron/data', async (req, res) => {
+  const gatewayKey = process.env.VICTRON_GATEWAY_KEY;
+
+  if (gatewayKey && req.header('x-device-key') !== gatewayKey) {
+    return res.status(401).json({
+      error: 'Clau de dispositiu invàlida'
+    });
+  }
+
+  const { mac, rawData } = req.body || {};
+
+  if (!mac || !rawData) {
+    return res.status(400).json({
+      error: "Cal indicar 'mac' i 'rawData'"
+    });
+  }
+
+  const config = getVictronDeviceConfig(
+    req.params.boatId,
+    mac
+  );
+
+  if (!config) {
+    return res.status(404).json({
+      error: `Cap dispositiu Victron configurat amb MAC ${mac} per aquest vaixell`
+    });
+  }
+
+  try {
+    const parsed = parseVictronAdvertisement(
+      rawData,
+      config.encryptionKey
+    );
+
+    const status = {
+      deviceState: parsed.deviceState,
+      chargerErrorCode: parsed.chargerErrorCode,
+      batteryVoltage: parsed.batteryVoltage,
+      batteryCurrent: parsed.batteryCurrent,
+      yieldToday: parsed.yieldToday,
+      solarPower: parsed.solarPower,
+      loadCurrent: parsed.loadCurrent,
+    };
+
+    const device = updateVictronReading(
+      req.params.boatId,
+      mac,
+      status
+    );
+
+    res.json({ ok: true, device: device.id, status });
+
+  } catch (e) {
+    console.error(e);
+
+    res.status(400).json({
+      error: e.message
+    });
+  }
+});
+
+
+// Ruta d'administració: dona d'alta la MAC + clau de desxifratge d'un
+// dispositiu Victron, un cop tretes de VictronConnect (Settings >
+// Product info > Instant readout via Bluetooth > Show).
+//
+// Exemple:
+// PUT /boats/juriola/victron-config
+// { "mac": "A2:60:11:30:03:80", "encryptionKey": "32caractershex...", "name": "SmartSolar" }
+
+app.put('/boats/:boatId/victron-config', requireAuth, requireBoatAccess, (req, res) => {
+  const { mac, encryptionKey, name } = req.body || {};
+
+  if (!mac || !encryptionKey) {
+    return res.status(400).json({
+      error: "Cal indicar 'mac' i 'encryptionKey'"
+    });
+  }
+
+  const config = configureVictronDevice(
+    req.params.boatId,
+    { mac, encryptionKey, name }
+  );
+
+  if (!config) {
+    return res.status(404).json({
+      error: 'Vaixell no trobat'
+    });
+  }
+
+  res.json({ ok: true, config });
+});
 
 
 // ─────────────────────────────────────────────
