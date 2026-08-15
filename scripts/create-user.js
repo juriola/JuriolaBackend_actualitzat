@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { hashPassword } from '../src/auth.js';
-import { addUser } from '../src/store.js';
+import { addUser, initDb } from '../src/store.js';
 
 // ─────────────────────────────────────────────
 // ÚS
@@ -24,6 +24,8 @@ if (!username || !password || !role) {
   );
   process.exit(1);
 }
+
+await initDb();
 
 const passwordHash = await hashPassword(password);
 

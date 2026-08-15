@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { deleteUserByUsername } from '../src/store.js';
+import { deleteUserByUsername, initDb } from '../src/store.js';
 
 // ─────────────────────────────────────────────
 // ÚS
@@ -17,6 +17,8 @@ if (!username) {
   console.error('Ús: node scripts/delete-user.js <username>');
   process.exit(1);
 }
+
+await initDb();
 
 const removed = deleteUserByUsername(username);
 
