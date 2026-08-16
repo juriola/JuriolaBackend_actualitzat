@@ -920,6 +920,50 @@ export function setUserPassword(username, passwordHash) {
 }
 
 
+export function updateUserPassword(userId, newPasswordHash) {
+  const db = load();
+
+  const user = db.users.find(
+    u => u.id === userId
+  );
+
+  if (!user) {
+    return null;
+  }
+
+  user.passwordHash = newPasswordHash;
+
+  save(db);
+
+  return { id: user.id, username: user.username };
+}
+
+
+export function updateUserRole(username, role) {
+  const db = load();
+
+  if (role !== 'admin' && role !== 'client') {
+    throw new Error(
+      "El rol ha de ser 'admin' o 'client'"
+    );
+  }
+
+  const user = db.users.find(
+    u => u.username === username
+  );
+
+  if (!user) {
+    return null;
+  }
+
+  user.role = role;
+
+  save(db);
+
+  return { id: user.id, username: user.username, role: user.role, boatId: user.boatId };
+}
+
+
 export function deleteUserByUsername(username) {
   const db = load();
 

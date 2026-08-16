@@ -22,6 +22,13 @@ const SCALE = {
   temp_current: 0.1,
   minitemp_set: 0.1,
   maxtemp_set: 0.1,
+
+  // Endolls/dispositius amb mesura d'energia (categoria Tuya "cz").
+  // cur_current ve en mA -> A; cur_power i cur_voltage vénen en
+  // dècimes -> W i V.
+  cur_current: 0.001,
+  cur_power: 0.1,
+  cur_voltage: 0.1,
 };
 
 const TYPES = {
@@ -35,6 +42,12 @@ const TYPES = {
   humidity_value: 'humitat',
 
   battery_percentage: 'bateria_percent',
+
+  // Es classifiquen com a "valor": l'app ja suggereix Voltímetre/
+  // Amperímetre per aquest tipus genèric, i l'usuari pot confirmar-ho.
+  cur_current: 'valor',
+  cur_power: 'valor',
+  cur_voltage: 'valor',
 };
 
 const UNITS = {
@@ -47,6 +60,10 @@ const UNITS = {
   humidity_value: '%',
 
   battery_percentage: '%',
+
+  cur_current: 'A',
+  cur_power: 'W',
+  cur_voltage: 'V',
 
   switch_1: '',
   switch: '',
