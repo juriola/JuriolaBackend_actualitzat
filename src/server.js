@@ -20,6 +20,10 @@ import {
   deleteGadget,
   initDb,
   getUserByUsername,
+  getUserById,
+  updateUserPassword,
+  getAppVersionInfo,
+  setAppVersionInfo,
   GRID_COLUMNS,
   configureVictronDevice,
   getVictronDeviceConfig,
@@ -38,6 +42,7 @@ import { parseVictronAdvertisement } from './victronDecoder.js';
 
 import {
   verifyPassword,
+  hashPassword,
   signToken,
   requireAuth,
   requireBoatAccess,
@@ -112,6 +117,72 @@ app.post('/auth/login', async (req, res) => {
 
 app.get('/auth/me', requireAuth, (req, res) => {
   res.json(req.user);
+});
+
+
+// ─────────────────────────────────────────────
+// VERSIÓ DE L'APP
+// ─────────────────────────────────────────────
+//
+// GET és pública (sense login): l'app la consulta just en obrir-se,
+// abans fins i tot de tenir sessió iniciada en alguns casos.
+
+app.get('/app/version', (_req, res) => {
+  const info = getAppVersionInfo();
+  res.json(info || {});
+});
+
+app.put('/app/version', requireAuth, requireAdmin, (req, res) => {
+  const { versionCode, versionName, downloadUrl, releaseNotes } = req.body || {};
+
+  if (!versionCode || !versionName || !downloadUrl) {
+    return res.status(400).json({
+      error: "Calen 'versionCode', 'versionName' i 'downloadUrl'"
+    });
+  }
+
+  const info = setAppVersionInfo({ versionCode, versionName, downloadUrl, releaseNotes });
+
+  res.json(info);
+});
+
+
+app.put('/auth/password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({
+      error: "Cal indicar 'currentPassword' i 'newPassword'"
+    });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({
+      error: 'La contrasenya nova ha de tenir com a mínim 6 caràcters'
+    });
+  }
+
+  const user = getUserById(req.user.sub);
+
+  if (!user) {
+    return res.status(404).json({
+      error: 'Usuari no trobat'
+    });
+  }
+
+  const valid = await verifyPassword(currentPassword, user.passwordHash);
+
+  if (!valid) {
+    return res.status(401).json({
+      error: 'La contrasenya actual no és correcta'
+    });
+  }
+
+  const newPasswordHash = await hashPassword(newPassword);
+
+  updateUserPassword(user.id, newPasswordHash);
+
+  res.json({ ok: true });
 });
 
 

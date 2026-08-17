@@ -981,3 +981,33 @@ export function deleteUserByUsername(username) {
 
   return { id: removed.id, username: removed.username };
 }
+
+
+// ─────────────────────────────────────────────
+// VERSIÓ DE L'APP (per avisar els clients d'actualitzacions)
+// ─────────────────────────────────────────────
+//
+// Com que l'app es distribueix com a APK directe (fora de la Play
+// Store), no hi ha actualització automàtica. Guardem aquí quina és
+// l'última versió publicada perquè la pròpia app ho pugui comprovar
+// sola en obrir-se i avisar l'usuari si en surt una de més nova.
+
+export function getAppVersionInfo() {
+  const db = load();
+  return db.appVersion || null;
+}
+
+export function setAppVersionInfo({ versionCode, versionName, downloadUrl, releaseNotes }) {
+  const db = load();
+
+  db.appVersion = {
+    versionCode,
+    versionName,
+    downloadUrl,
+    releaseNotes: releaseNotes || '',
+  };
+
+  save(db);
+
+  return db.appVersion;
+}
