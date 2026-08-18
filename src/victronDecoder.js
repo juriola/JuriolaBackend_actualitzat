@@ -28,6 +28,7 @@ export const DEVICE_RECORD_TYPE = {
   INVERTER: 0x03,
   DCDC_CONVERTER: 0x04,
   SMART_LITHIUM: 0x05,
+  AC_CHARGER: 0x08,
   ORION_XS: 0x0f,
 };
 
@@ -112,6 +113,12 @@ export function parseVictronAdvertisement(rawManufacturerData, encryptionKeyHex)
     case DEVICE_RECORD_TYPE.SOLAR_CHARGER:
       return { ...base, kind: 'solar_charger', ...parseSolarCharger(decrypted) };
 
+    case DEVICE_RECORD_TYPE.AC_CHARGER:
+      return { ...base, kind: 'ac_charger', ...parseAcCharger(decrypted) };
+
+    case DEVICE_RECORD_TYPE.ORION_XS:
+      return { ...base, kind: 'dc_dc_converter', ...parseOrionXs(decrypted) };
+
     default:
       return { ...base, kind: 'unknown', rawDecryptedHex: decrypted.toString('hex') };
   }
@@ -140,5 +147,88 @@ function parseSolarCharger(data) {
     yieldToday,
     solarPower,
     loadCurrent,
+  };
+}
+
+
+/**
+ * Llegeix `nBits` bits començant a `bitOffset` (comptant des del principi
+ * del buffer, ordre little-endian, tal com empaqueta Victron). Necessari
+ * perquè alguns registres (com l'AC Charger) no alineen els camps a
+ * bytes sencers.
+ */
+function readBits(buffer, bitOffset, nBits, signed = false) {
+  const byteStart = Math.floor(bitOffset / 8);
+  const bitStartInByte = bitOffset % 8;
+  const bytesNeeded = Math.ceil((bitStartInByte + nBits) / 8);
+
+  let value = 0n;
+  for (let i = bytesNeeded - 1; i >= 0; i--) {
+    value = (value << 8n) | BigInt(buffer[byteStart + i] ?? 0);
+  }
+
+  value = value >> BigInt(bitStartInByte);
+  value = value & ((1n << BigInt(nBits)) - 1n);
+
+  if (signed && (value & (1n << BigInt(nBits - 1)))) {
+    value -= 1n << BigInt(nBits);
+  }
+
+  return Number(value);
+}
+
+
+/**
+ * Interpreta un "AC Charger" (carregador de 220V).
+ *
+ * IMPORTANT: la mateixa documentació de Victron marca aquest format
+ * com a "pendent de confirmar" (Record layout TBD) — funciona segons
+ * la millor informació disponible, però convé comparar els primers
+ * valors reals amb el que mostra VictronConnect abans de confiar-hi
+ * del tot en producció.
+ */
+function parseAcCharger(data) {
+  const deviceStateCode = readBits(data, 32, 8);
+  const chargerErrorCode = readBits(data, 40, 8);
+  const batteryVoltage1 = readBits(data, 48, 13) / 100; // V
+  const batteryCurrent1 = readBits(data, 61, 11) / 10; // A
+  const batteryVoltage2 = readBits(data, 72, 13) / 100; // V
+  const batteryCurrent2 = readBits(data, 85, 11) / 10; // A
+
+  return {
+    deviceState: DEVICE_STATE[deviceStateCode] || `Desconegut (${deviceStateCode})`,
+    deviceStateCode,
+    chargerErrorCode,
+    batteryVoltage1,
+    batteryCurrent1,
+    batteryVoltage2,
+    batteryCurrent2,
+  };
+}
+
+
+/**
+ * Interpreta un Orion XS (DC-DC). Font: format confirmat directament per
+ * un enginyer de Victron Energy al fòrum oficial (octubre 2025) — tots
+ * els camps alineats a bytes sencers, sense empaquetament de bits.
+ */
+function parseOrionXs(data) {
+  const deviceStateCode = data.readUInt8(0);
+  const errorCode = data.readUInt8(1);
+
+  const outputVoltageRaw = data.readUInt16LE(2);
+  const outputCurrentRaw = data.readUInt16LE(4);
+  const inputVoltageRaw = data.readUInt16LE(6);
+  const inputCurrentRaw = data.readUInt16LE(8);
+
+  return {
+    deviceState: DEVICE_STATE[deviceStateCode] || `Desconegut (${deviceStateCode})`,
+    deviceStateCode,
+    errorCode,
+    // 0x7FFF / 0xFFFF vol dir "valor no disponible" segons Victron.
+    outputVoltage: outputVoltageRaw === 0x7fff ? null : data.readInt16LE(2) / 100, // V
+    outputCurrent: outputCurrentRaw === 0x7fff ? null : data.readInt16LE(4) / 10, // A
+    inputVoltage: inputVoltageRaw === 0xffff ? null : inputVoltageRaw / 100, // V
+    inputCurrent: inputCurrentRaw === 0xffff ? null : inputCurrentRaw / 10, // A
   };
 }
