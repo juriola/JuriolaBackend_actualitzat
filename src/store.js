@@ -465,6 +465,97 @@ export function setBoatTuyaUid(boatId, uid) {
 // Tuya
 //
 
+// ─────────────────────────────────────────────
+// CAMPS VICTRON PER TIPUS (per generar instruments i llegir l'estat)
+// ─────────────────────────────────────────────
+//
+// Cada "kind" que pot tornar victronDecoder.js exposa uns quants camps
+// numèrics interessants per mostrar al panell. Aquesta llista és la
+// font única tant per als instruments afegibles com per a la consulta
+// d'estat en viu — així sempre van coordinats.
+
+export const VICTRON_FIELDS_BY_KIND = {
+  solar_charger: [
+    { code: 'batteryVoltage', unit: 'V', label: 'Voltatge bateria' },
+    { code: 'batteryCurrent', unit: 'A', label: 'Corrent bateria' },
+    { code: 'solarPower', unit: 'W', label: 'Potència solar' },
+    { code: 'yieldToday', unit: 'kWh', label: 'Producció avui' },
+    { code: 'loadCurrent', unit: 'A', label: 'Corrent de càrrega' },
+  ],
+  ac_charger: [
+    { code: 'batteryVoltage1', unit: 'V', label: 'Voltatge bateria 1' },
+    { code: 'batteryCurrent1', unit: 'A', label: 'Corrent bateria 1' },
+    { code: 'batteryVoltage2', unit: 'V', label: 'Voltatge bateria 2' },
+    { code: 'batteryCurrent2', unit: 'A', label: 'Corrent bateria 2' },
+  ],
+  dc_dc_converter: [
+    { code: 'outputVoltage', unit: 'V', label: 'Voltatge sortida' },
+    { code: 'outputCurrent', unit: 'A', label: 'Corrent sortida' },
+    { code: 'inputVoltage', unit: 'V', label: 'Voltatge entrada' },
+    { code: 'inputCurrent', unit: 'A', label: 'Corrent entrada' },
+  ],
+};
+
+
+/**
+ * Converteix l'últim estat desat d'un dispositiu Victron (device.status,
+ * tal com el desa updateVictronReading) en la mateixa forma [{code,
+ * value}] que ja retorna Tuya — així l'endpoint /status i l'app no han
+ * de saber d'on ve cada dispositiu.
+ */
+export function getVictronDeviceStatusItems(device) {
+  const kind = device?.status?.kind;
+  const fields = VICTRON_FIELDS_BY_KIND[kind];
+
+  if (!fields) {
+    return [];
+  }
+
+  return fields
+    .filter(f => device.status[f.code] !== undefined && device.status[f.code] !== null)
+    .map(f => ({ code: f.code, value: device.status[f.code] }));
+}
+
+
+/**
+ * Instruments (capacitats afegibles) generats només des dels
+ * dispositius Victron ja coneguts d'un vaixell.
+ */
+export function getVictronInstruments(boatId) {
+  const devices = getDevices(boatId) || [];
+  const instruments = [];
+
+  for (const device of devices) {
+    if (device.source !== 'victron') {
+      continue;
+    }
+
+    const kind = device?.status?.kind;
+    const fields = VICTRON_FIELDS_BY_KIND[kind] || [];
+
+    for (const field of fields) {
+      if (device.status[field.code] === undefined || device.status[field.code] === null) {
+        continue;
+      }
+
+      instruments.push({
+        id: `${device.id}:${field.code}`,
+        source: 'victron',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: field.code,
+        type: 'valor', // suggereix Voltímetre/Amperímetre a l'app, l'usuari ho pot canviar
+        unit: field.unit,
+        title: `${device.name} · ${field.label}`,
+      });
+    }
+  }
+
+  return instruments;
+}
+
+
 export function getLocalInstruments(
   boatId
 ) {
@@ -474,7 +565,7 @@ export function getLocalInstruments(
     return null;
   }
 
-  const instruments = [];
+  const instruments = getVictronInstruments(boatId);
 
   for (const device of devices) {
 

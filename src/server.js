@@ -27,7 +27,9 @@ import {
   GRID_COLUMNS,
   configureVictronDevice,
   getVictronDeviceConfig,
-  updateVictronReading
+  updateVictronReading,
+  getVictronDeviceStatusItems,
+  getVictronInstruments
 } from './store.js';
 
 import {
@@ -254,16 +256,18 @@ app.get('/boats/:boatId/instruments', requireAuth, requireBoatAccess, async (req
     // Font principal: el compte Tuya real d'aquest client,
     // amb TOT el que hi hagi donat d'alta (no cal registrar
     // res a mà a la nostra base de dades).
-    const instruments = await getAvailableInstruments(boat);
+    const tuyaInstruments = await getAvailableInstruments(boat);
+    const victronInstruments = getVictronInstruments(boat.id);
 
-    return res.json(instruments);
+    return res.json([...tuyaInstruments, ...victronInstruments]);
 
   } catch (e) {
     console.error(e);
 
     // Si encara no hi ha credencials Tuya configurades pel
     // vaixell (o falla la crida), fem servir el catàleg local
-    // com a fallback perquè el client no es quedi sense res.
+    // com a fallback perquè el client no es quedi sense res
+    // (ja inclou tant Tuya local com Victron).
     const fallback = getLocalInstruments(boat.id) || [];
 
     res.json(fallback);
@@ -425,6 +429,12 @@ app.get(
         return res.status(404).json({
           error: 'Dispositiu no trobat'
         });
+      }
+
+      // Victron: no hi ha cap API a consultar — l'última lectura ja
+      // queda desada localment cada cop que l'ESP32 n'envia una de nova.
+      if (device.source === 'victron') {
+        return res.json(getVictronDeviceStatusItems(device));
       }
 
       res.json(
