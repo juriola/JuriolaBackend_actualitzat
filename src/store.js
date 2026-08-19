@@ -626,6 +626,25 @@ export function getVictronDeviceStatusItems(device) {
 
 
 /**
+ * Un dispositiu Victron es considera "online" si ha enviat una lectura
+ * vàlida (tipus 0x10) en els últims 5 minuts. Els reinicis preventius
+ * de l'escaneig BLE al firmware ESP32 són cada 3 minuts, així que
+ * aquest marge dona prou joc perquè no aparegui com a "offline" entre
+ * cicles normals de funcionament.
+ */
+const VICTRON_ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
+
+function isVictronDeviceOnline(device) {
+  if (!device.lastUpdate) {
+    return false;
+  }
+
+  const ageMs = Date.now() - new Date(device.lastUpdate).getTime();
+  return ageMs >= 0 && ageMs < VICTRON_ONLINE_THRESHOLD_MS;
+}
+
+
+/**
  * Instruments (capacitats afegibles) generats només des dels
  * dispositius Victron ja coneguts d'un vaixell.
  */
@@ -640,6 +659,7 @@ export function getVictronInstruments(boatId) {
 
     const kind = device?.status?.kind;
     const fields = VICTRON_FIELDS_BY_KIND[kind] || [];
+    const online = isVictronDeviceOnline(device);
 
     for (const field of fields) {
       if (device.status[field.code] === undefined || device.status[field.code] === null) {
@@ -655,6 +675,8 @@ export function getVictronInstruments(boatId) {
         code: field.code,
         type: 'valor', // suggereix Voltímetre/Amperímetre a l'app, l'usuari ho pot canviar
         unit: field.unit,
+        value: device.status[field.code],
+        online,
         title: `${device.name} · ${field.label}`,
       });
     }
