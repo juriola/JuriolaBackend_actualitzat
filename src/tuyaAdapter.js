@@ -24,10 +24,10 @@ const SCALE = {
   maxtemp_set: 0.1,
 
   // Endolls/dispositius amb mesura d'energia (categoria Tuya "cz").
-  // cur_current ve en mA -> A; cur_power ve en dècimes -> W;
-  // cur_voltage ve en centèsimes -> V (no dècimes, com es pensava abans).
+  // cur_current ve en mA -> A; cur_power i cur_voltage vénen en
+  // centèsimes -> W i V (no dècimes, com es pensava abans en tots dos casos).
   cur_current: 0.001,
-  cur_power: 0.1,
+  cur_power: 0.01,
   cur_voltage: 0.01,
 };
 
@@ -69,6 +69,28 @@ const UNITS = {
   switch: '',
 };
 
+// Nom llegible de cada capacitat, per construir el títol dels instruments
+// (p. ex. "Endoll cuina · Voltatge"), en lloc del codi tècnic de Tuya.
+// Mateix esperit que VICTRON_FIELDS_BY_KIND a store.js.
+const LABELS = {
+  switch_1: 'Interruptor',
+  switch: 'Interruptor',
+
+  va_temperature: 'Temperatura',
+  temp_current: 'Temperatura',
+  minitemp_set: 'Temperatura mínima',
+  maxtemp_set: 'Temperatura màxima',
+
+  va_humidity: 'Humitat',
+  humidity_value: 'Humitat',
+
+  battery_percentage: 'Bateria',
+
+  cur_current: 'Corrent',
+  cur_power: 'Potència',
+  cur_voltage: 'Voltatge',
+};
+
 const scale = (code, value) => {
   return SCALE[code] && typeof value === 'number'
     ? value * SCALE[code]
@@ -81,6 +103,10 @@ const getType = (code) => {
 
 const getUnit = (code) => {
   return UNITS[code] || '';
+};
+
+const getLabel = (code) => {
+  return LABELS[code] || code;
 };
 
 
@@ -188,7 +214,7 @@ export async function getAvailableInstruments(boat) {
 
         online: info.online ?? device.online,
 
-        title: `${info.name || device.name} - ${status.code}`,
+        title: `${info.name || device.name} · ${getLabel(status.code)}`,
       });
     }
   }
