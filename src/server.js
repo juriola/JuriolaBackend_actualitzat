@@ -28,6 +28,7 @@ import {
   configureVictronDevice,
   getVictronDeviceConfig,
   updateVictronReading,
+  waitForPersist,
   getVictronDeviceStatusItems,
   getVictronInstruments
 } from './store.js';
@@ -694,7 +695,7 @@ app.post('/boats/:boatId/victron/data', async (req, res) => {
 // PUT /boats/juriola/victron-config
 // { "mac": "A2:60:11:30:03:80", "encryptionKey": "32caractershex...", "name": "SmartSolar" }
 
-app.put('/boats/:boatId/victron-config', requireAuth, requireBoatAccess, (req, res) => {
+app.put('/boats/:boatId/victron-config', requireAuth, requireBoatAccess, async (req, res) => {
   const { mac, encryptionKey, name } = req.body || {};
 
   if (!mac || !encryptionKey) {
@@ -711,6 +712,21 @@ app.put('/boats/:boatId/victron-config', requireAuth, requireBoatAccess, (req, r
   if (!config) {
     return res.status(404).json({
       error: 'Vaixell no trobat'
+    });
+  }
+
+  // Esperem que l'escriptura a Upstash hagi acabat de veritat abans de
+  // confirmar "ok:true". Sense això, si el contenidor de Render es
+  // reciclava just després de respondre, la configuració es perdia
+  // silenciosament i el proper avís del gateway ESP32 tornava a donar
+  // 404 "Cap dispositiu Victron configurat", tot i haver rebut "ok:true".
+  try {
+    await waitForPersist();
+  } catch (e) {
+    console.error('[victron-config] No s\'ha pogut desar de forma persistent:', e);
+
+    return res.status(502).json({
+      error: 'La configuració s\'ha aplicat en memòria però no s\'ha pogut desar de forma persistent (torna-ho a provar en uns segons)'
     });
   }
 

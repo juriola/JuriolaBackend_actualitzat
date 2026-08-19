@@ -67,8 +67,8 @@ async function fetchFromUpstash() {
 }
 
 
-function pushToUpstash(db) {
-  fetch(
+async function pushToUpstash(db) {
+  const res = await fetch(
     `${UPSTASH_URL}/set/${DB_KEY}`,
     {
       method: 'POST',
@@ -78,9 +78,15 @@ function pushToUpstash(db) {
       },
       body: JSON.stringify(db),
     }
-  ).catch(err => {
-    console.error('[store] Error desant a Upstash:', err);
-  });
+  );
+
+  // Abans només es capturaven errors de xarxa (fetch rebutjat), però un
+  // 4xx/5xx d'Upstash (per exemple, token caducat) també ha de comptar
+  // com a fallada, o si no la resta del sistema pensa que s'ha desat bé
+  // quan en realitat no.
+  if (!res.ok) {
+    throw new Error(`Upstash SET ha fallat: ${res.status}`);
+  }
 }
 
 
@@ -129,9 +135,42 @@ function load() {
 }
 
 
+// Es guarda sempre la promesa de la darrera escriptura a Upstash. La
+// majoria de rutes NO en fan `await` (per no alentir cada resposta), però
+// les rutes que et donen una confirmació explícita a l'usuari (com
+// "ok:true" a victron-config) SÍ que hi han de fer `await` amb
+// `waitForPersist()`, per no dir "desat" quan en realitat encara no ho
+// estava de veritat a Upstash.
+let lastPersist = Promise.resolve();
+
 function save(db) {
   dbCache = db;
-  pushToUpstash(db);
+
+  lastPersist = pushToUpstash(db).catch(err => {
+    console.error('[store] Error desant a Upstash:', err);
+    throw err;
+  });
+
+  // Evitem l'avís de "unhandled promise rejection" quan ningú fa `await`
+  // d'aquesta escriptura concreta; qui sí que en faci `await` via
+  // `waitForPersist()` rebrà igualment l'error (cada `.catch()` es
+  // gestiona independentment sobre la mateixa promesa).
+  lastPersist.catch(() => {});
+
+  return lastPersist;
+}
+
+
+/**
+ * Retorna una promesa que es resol quan l'última escriptura pendent a
+ * Upstash ha acabat (i es rebutja si ha fallat). Fer-hi `await` just
+ * abans de respondre "ok:true" a l'usuari en una ruta d'escriptura
+ * important evita confirmar un desat que en realitat s'ha perdut
+ * silenciosament pel camí (per exemple, si Render reinicia el
+ * contenidor abans que acabi la petició de xarxa cap a Upstash).
+ */
+export function waitForPersist() {
+  return lastPersist;
 }
 
 
