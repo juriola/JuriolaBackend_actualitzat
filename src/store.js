@@ -90,6 +90,40 @@ async function pushToUpstash(db) {
 }
 
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Intenta `fetchFromUpstash()` fins a 3 cops (amb una petita espera
+ * entre intents) abans de rendir-se. Els contenidors de Render es
+ * poden despertar amb la xarxa encara no del tot preparada; un sol
+ * intent fallit no hauria de deixar una instància sencera "orfe" (en
+ * memòria buida) fins al proper reinici.
+ */
+async function fetchFromUpstashWithRetries(maxAttempts = 3) {
+  let lastErr;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fetchFromUpstash();
+    } catch (err) {
+      lastErr = err;
+      console.error(
+        `[store] Intent ${attempt}/${maxAttempts} de llegir Upstash ha fallat:`,
+        err
+      );
+
+      if (attempt < maxAttempts) {
+        await sleep(500 * attempt); // 500ms, 1000ms...
+      }
+    }
+  }
+
+  throw lastErr;
+}
+
+
 /**
  * Cal cridar-la un sol cop, a l'arrencada del servidor (server.js),
  * abans d'acceptar cap petició. Carrega les dades reals des
@@ -109,9 +143,10 @@ async function pushToUpstash(db) {
  *
  * Ara es distingeixen els dos casos: només se sembra Upstash quan el
  * `fetch` ha anat BÉ i ha confirmat que la clau no existeix; si el
- * `fetch` falla, aquesta instància funciona en memòria amb un seed
- * buit (mode degradat, es queixa fort als logs) però MAI escriu res
- * a Upstash — la propera vegada que arrenqui i la xarxa vagi bé,
+ * `fetch` falla (fins i tot després de reintentar-ho unes quantes
+ * vegades), aquesta instància funciona en memòria amb un seed buit
+ * (mode degradat, es queixa fort als logs) però MAI escriu res a
+ * Upstash — la propera vegada que arrenqui i la xarxa vagi bé,
  * tornarà a llegir les dades reals sense haver-les perdut.
  */
 export async function initDb() {
@@ -129,12 +164,12 @@ export async function initDb() {
   let fetchFailed = false;
 
   try {
-    remote = await fetchFromUpstash();
+    remote = await fetchFromUpstashWithRetries();
   } catch (err) {
     fetchFailed = true;
     console.error(
-      '[store] CRÍTIC: no s\'ha pogut llegir Upstash a l\'arrencada ' +
-      '(error de xarxa transitori?). Per seguretat NO es sobreescriurà ' +
+      '[store] CRÍTIC: no s\'ha pogut llegir Upstash a l\'arrencada, ' +
+      'ni tan sols reintentant-ho. Per seguretat NO es sobreescriurà ' +
       'la base de dades remota amb el seed buit: aquesta instància ' +
       'funcionarà en memòria en mode degradat fins al proper reinici.',
       err
