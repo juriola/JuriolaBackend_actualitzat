@@ -24,11 +24,11 @@ const SCALE = {
   maxtemp_set: 0.1,
 
   // Endolls/dispositius amb mesura d'energia (categoria Tuya "cz").
-  // cur_current ve en mA -> A; cur_power i cur_voltage vénen en
-  // dècimes -> W i V.
+  // cur_current ve en mA -> A; cur_power ve en dècimes -> W;
+  // cur_voltage ve en centèsimes -> V (no dècimes, com es pensava abans).
   cur_current: 0.001,
   cur_power: 0.1,
-  cur_voltage: 0.1,
+  cur_voltage: 0.01,
 };
 
 const TYPES = {
