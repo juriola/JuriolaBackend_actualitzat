@@ -660,6 +660,7 @@ app.post('/boats/:boatId/victron/data', async (req, res) => {
     );
 
     const status = {
+      kind: parsed.kind,
       deviceState: parsed.deviceState,
       chargerErrorCode: parsed.chargerErrorCode,
       batteryVoltage: parsed.batteryVoltage,
