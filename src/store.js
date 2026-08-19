@@ -93,8 +93,26 @@ async function pushToUpstash(db) {
 /**
  * Cal cridar-la un sol cop, a l'arrencada del servidor (server.js),
  * abans d'acceptar cap petició. Carrega les dades reals des
- * d'Upstash; si encara no n'hi ha (primer arrencada), sembra amb
- * `seed` i el puja.
+ * d'Upstash; si encara no n'hi ha (primer arrencada de veritat, la
+ * clau no existeix), sembra amb `seed` i el puja.
+ *
+ * ⚠️ CORRECCIÓ IMPORTANT: abans, si `fetchFromUpstash()` fallava per
+ * QUALSEVOL motiu (per exemple, un simple error de xarxa transitori
+ * durant l'arrencada del contenidor), es tractava exactament igual
+ * que "la clau no existeix" -> es carregava el `seed` buit EN
+ * MEMÒRIA *i, a més, es tornava a pujar aquest seed buit a Upstash*,
+ * esborrant per sempre qualsevol dada real que hi hagués (usuaris,
+ * gadgets, configuració Victron...). Com que Render pot reiniciar el
+ * contenidor sovint (cada `git push`, per l'"spin-down" del pla
+ * gratuït, etc.), n'hi havia prou amb un sol reinici amb mala sort
+ * perquè es perdés tota la base de dades sense cap avís.
+ *
+ * Ara es distingeixen els dos casos: només se sembra Upstash quan el
+ * `fetch` ha anat BÉ i ha confirmat que la clau no existeix; si el
+ * `fetch` falla, aquesta instància funciona en memòria amb un seed
+ * buit (mode degradat, es queixa fort als logs) però MAI escriu res
+ * a Upstash — la propera vegada que arrenqui i la xarxa vagi bé,
+ * tornarà a llegir les dades reals sense haver-les perdut.
  */
 export async function initDb() {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) {
@@ -107,10 +125,21 @@ export async function initDb() {
     return;
   }
 
-  const remote = await fetchFromUpstash().catch(err => {
-    console.error('[store] No s\'ha pogut llegir Upstash, s\'usa el seed local:', err);
-    return null;
-  });
+  let remote = null;
+  let fetchFailed = false;
+
+  try {
+    remote = await fetchFromUpstash();
+  } catch (err) {
+    fetchFailed = true;
+    console.error(
+      '[store] CRÍTIC: no s\'ha pogut llegir Upstash a l\'arrencada ' +
+      '(error de xarxa transitori?). Per seguretat NO es sobreescriurà ' +
+      'la base de dades remota amb el seed buit: aquesta instància ' +
+      'funcionarà en memòria en mode degradat fins al proper reinici.',
+      err
+    );
+  }
 
   dbCache = remote || structuredClone(seed);
 
@@ -118,8 +147,13 @@ export async function initDb() {
     dbCache.users = [];
   }
 
-  if (!remote) {
-    pushToUpstash(dbCache);
+  // Només sembrem Upstash quan estem SEGURS que la clau encara no
+  // existia (fetch ha anat bé i ha tornat null) -- mai quan el fetch
+  // ha fallat, o un simple error de xarxa esborraria dades reals.
+  if (!remote && !fetchFailed) {
+    pushToUpstash(dbCache).catch(err => {
+      console.error('[store] Error sembrant Upstash a la primera arrencada:', err);
+    });
   }
 }
 
