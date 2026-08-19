@@ -735,6 +735,28 @@ app.put('/boats/:boatId/victron-config', requireAuth, requireBoatAccess, async (
 
 
 // ─────────────────────────────────────────────
+// RUTA DE DIAGNÒSTIC TEMPORAL (per la depuració del gateway Victron
+// d'avui). Es pot eliminar un cop confirmat que tot funciona bé.
+// Mostra directament què hi ha desat, sense haver d'interpretar codis
+// d'error indirectes.
+// ─────────────────────────────────────────────
+app.get('/boats/:boatId/victron-config/debug', requireAuth, requireBoatAccess, (req, res) => {
+  const boat = getBoat(req.params.boatId);
+
+  if (!boat) {
+    return res.status(404).json({
+      error: 'Vaixell no trobat'
+    });
+  }
+
+  res.json({
+    boatId: boat.id,
+    victronDevices: boat.victronDevices || [],
+  });
+});
+
+
+// ─────────────────────────────────────────────
 // GADGETS
 // ─────────────────────────────────────────────
 
