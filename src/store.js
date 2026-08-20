@@ -17,7 +17,9 @@ const seed = {
 
       gadgets: [],
 
-      victronDevices: []
+      victronDevices: [],
+
+      aninerelDevices: []
     }
   ]
 };
@@ -313,12 +315,12 @@ export function getDevice(
 
 
 // ─────────────────────────────────────────────
-// AFEGIR DEVICE (des del cat\u00e0leg d'instruments Tuya)
+// AFEGIR DEVICE (des del catàleg d'instruments Tuya)
 // ─────────────────────────────────────────────
 //
 // Quan l'usuari tria un instrument Tuya per afegir-lo al panell,
 // primer cal un "device" local (amb id propi) que el representi,
-// perqu\u00e8 els gadgets i els endpoints de status/command treballen
+// perquè els gadgets i els endpoints de status/command treballen
 // sobre devices locals, no directament sobre IDs de Tuya.
 //
 // Si ja existeix un device local amb aquest tuya_device_id, el
@@ -520,6 +522,122 @@ export function updateVictronReading(boatId, mac, status) {
 
 
 // ─────────────────────────────────────────────
+// ANINEREL / LANMAO BMS (BLE GATT actiu via ESP32 gateway)
+// ─────────────────────────────────────────────
+//
+// Mateix esperit que Victron, però amb connexió GATT activa en lloc
+// d'escoltar advertisements passius: l'ESP32 es connecta a la MAC del
+// BMS, envia la comanda de lectura del registre 0x0000 i reenvia en cru
+// la resposta rebuda per notificació (aninerelDecoder.js la desxifra).
+// Cal la MAC de cada BMS (una per bateria: Babord, Estribord...).
+//
+
+export function configureAninerelDevice(
+  boatId,
+  { mac, name }
+) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  if (!Array.isArray(boat.aninerelDevices)) {
+    boat.aninerelDevices = [];
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let config = boat.aninerelDevices.find(
+    d => d.mac === normalizedMac
+  );
+
+  if (config) {
+    config.name = name || config.name;
+  } else {
+    config = {
+      mac: normalizedMac,
+      name: name || 'Bateria Aninerel'
+    };
+
+    boat.aninerelDevices.push(config);
+  }
+
+  save(db);
+
+  return config;
+}
+
+
+export function getAninerelDeviceConfig(boatId, mac) {
+  const boat = getBoat(boatId);
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  return (boat.aninerelDevices || []).find(
+    d => d.mac === normalizedMac
+  ) || null;
+}
+
+
+/**
+ * Desa la lectura més recent d'un BMS Aninerel com un 'device' més del
+ * vaixell, creant-lo si encara no existeix. Mateix patró exacte que
+ * updateVictronReading().
+ */
+export function updateAninerelReading(boatId, mac, status) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let device = boat.devices.find(
+    d => d.source === 'aninerel' && d.mac === normalizedMac
+  );
+
+  if (!device) {
+    const config = (boat.aninerelDevices || []).find(
+      d => d.mac === normalizedMac
+    );
+
+    device = {
+      id: `device-aninerel-${normalizedMac.replace(/:/g, '')}`,
+      name: config?.name || 'Bateria Aninerel',
+      type: 'device',
+      source: 'aninerel',
+      mac: normalizedMac,
+      tuya_device_id: null,
+      params: {},
+    };
+
+    boat.devices.push(device);
+  }
+
+  device.lastUpdate = new Date().toISOString();
+  device.status = status;
+
+  save(db);
+
+  return device;
+}
+
+
+// ─────────────────────────────────────────────
 // UID TUYA (per vaixell/client)
 // ─────────────────────────────────────────────
 //
@@ -686,6 +804,162 @@ export function getVictronInstruments(boatId) {
 }
 
 
+// ─────────────────────────────────────────────
+// CAMPS ANINEREL BMS (per generar instruments i llegir l'estat)
+// ─────────────────────────────────────────────
+//
+// Mateix patró que VICTRON_FIELDS_BY_KIND: un únic "kind" (aninerel_bms)
+// amb els camps escalars que interessa poder afegir com a gadget. Els
+// arrays (cellVoltages, temperatures) es desglossen en camps individuals
+// (cell1, cell2..., temp1, temp2...) perquè cada un es pugui afegir com
+// a instrument independent, igual que fem amb Tuya.
+
+export const ANINEREL_FIELDS = [
+  { code: 'current', unit: 'A', label: 'Corrent' },
+  { code: 'packVoltage', unit: 'V', label: 'Voltatge total' },
+  { code: 'soc', unit: '%', label: 'Estat de càrrega (SOC)' },
+  { code: 'soh', unit: '%', label: 'Salut de la bateria (SOH)' },
+  { code: 'remainingCapacity', unit: 'Ah', label: 'Capacitat restant' },
+  { code: 'ratedCapacity', unit: 'Ah', label: 'Capacitat nominal' },
+  { code: 'cycles', unit: '', label: 'Cicles' },
+];
+
+// Nombre màxim de cel·les/sensors de temperatura pels quals generem
+// camps individuals (cell1..cell4, temp1..temp2) — coincideix amb el
+// que hem confirmat als packs de 4 cel·les del Juriola.
+const ANINEREL_MAX_CELLS = 4;
+const ANINEREL_MAX_TEMPS = 2;
+
+
+/**
+ * Converteix l'últim estat desat d'un BMS Aninerel (device.status, tal
+ * com el desa updateAninerelReading) en la mateixa forma [{code, value}]
+ * que ja retornen Tuya i Victron.
+ */
+export function getAninerelDeviceStatusItems(device) {
+  const status = device?.status;
+
+  if (!status || status.kind !== 'aninerel_bms') {
+    return [];
+  }
+
+  const items = [];
+
+  for (const field of ANINEREL_FIELDS) {
+    if (status[field.code] !== undefined && status[field.code] !== null) {
+      items.push({ code: field.code, value: status[field.code] });
+    }
+  }
+
+  (status.cellVoltages || []).forEach((v, i) => {
+    if (i < ANINEREL_MAX_CELLS) {
+      items.push({ code: `cell${i + 1}`, value: v });
+    }
+  });
+
+  (status.temperatures || []).forEach((v, i) => {
+    if (i < ANINEREL_MAX_TEMPS) {
+      items.push({ code: `temp${i + 1}`, value: v });
+    }
+  });
+
+  return items;
+}
+
+
+// Un BMS Aninerel es considera "online" amb el mateix criteri que
+// Victron: lectura rebuda en els últims 5 minuts.
+function isAninerelDeviceOnline(device) {
+  if (!device.lastUpdate) {
+    return false;
+  }
+
+  const ageMs = Date.now() - new Date(device.lastUpdate).getTime();
+  return ageMs >= 0 && ageMs < VICTRON_ONLINE_THRESHOLD_MS;
+}
+
+
+/**
+ * Instruments (capacitats afegibles) generats des dels BMS Aninerel ja
+ * coneguts d'un vaixell (una entrada per bateria: Babord, Estribord...).
+ */
+export function getAninerelInstruments(boatId) {
+  const devices = getDevices(boatId) || [];
+  const instruments = [];
+
+  for (const device of devices) {
+    if (device.source !== 'aninerel') {
+      continue;
+    }
+
+    const status = device.status;
+    if (!status || status.kind !== 'aninerel_bms') {
+      continue;
+    }
+
+    const online = isAninerelDeviceOnline(device);
+
+    for (const field of ANINEREL_FIELDS) {
+      if (status[field.code] === undefined || status[field.code] === null) {
+        continue;
+      }
+
+      instruments.push({
+        id: `${device.id}:${field.code}`,
+        source: 'aninerel',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: field.code,
+        type: 'valor',
+        unit: field.unit,
+        value: status[field.code],
+        online,
+        title: `${device.name} · ${field.label}`,
+      });
+    }
+
+    (status.cellVoltages || []).forEach((v, i) => {
+      if (i >= ANINEREL_MAX_CELLS) return;
+
+      instruments.push({
+        id: `${device.id}:cell${i + 1}`,
+        source: 'aninerel',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: `cell${i + 1}`,
+        type: 'valor',
+        unit: 'mV',
+        value: v,
+        online,
+        title: `${device.name} · Cel·la ${i + 1}`,
+      });
+    });
+
+    (status.temperatures || []).forEach((v, i) => {
+      if (i >= ANINEREL_MAX_TEMPS) return;
+
+      instruments.push({
+        id: `${device.id}:temp${i + 1}`,
+        source: 'aninerel',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: `temp${i + 1}`,
+        type: 'temperatura',
+        unit: '°C',
+        value: v,
+        online,
+        title: `${device.name} · Temperatura ${i + 1}`,
+      });
+    });
+  }
+
+  return instruments;
+}
+
+
 export function getLocalInstruments(
   boatId
 ) {
@@ -695,7 +969,10 @@ export function getLocalInstruments(
     return null;
   }
 
-  const instruments = getVictronInstruments(boatId);
+  const instruments = [
+    ...getVictronInstruments(boatId),
+    ...getAninerelInstruments(boatId),
+  ];
 
   for (const device of devices) {
 
