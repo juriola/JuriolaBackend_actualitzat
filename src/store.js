@@ -17,7 +17,11 @@ const seed = {
 
       gadgets: [],
 
-      victronDevices: []
+      victronDevices: [],
+
+      aninerelDevices: [],
+
+      renogyDevices: []
     }
   ]
 };
@@ -520,6 +524,238 @@ export function updateVictronReading(boatId, mac, status) {
 
 
 // ─────────────────────────────────────────────
+// ANINEREL / LANMAO BMS (BLE GATT actiu via ESP32 gateway)
+// ─────────────────────────────────────────────
+//
+// Mateix esperit que Victron, però amb connexió GATT activa en lloc
+// d'escoltar advertisements passius: l'ESP32 es connecta a la MAC del
+// BMS, envia la comanda de lectura del registre 0x0000 i reenvia en cru
+// la resposta rebuda per notificació (aninerelDecoder.js la desxifra).
+// Cal la MAC de cada BMS (una per bateria: Babord, Estribord...).
+//
+
+export function configureAninerelDevice(
+  boatId,
+  { mac, name }
+) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  if (!Array.isArray(boat.aninerelDevices)) {
+    boat.aninerelDevices = [];
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let config = boat.aninerelDevices.find(
+    d => d.mac === normalizedMac
+  );
+
+  if (config) {
+    config.name = name || config.name;
+  } else {
+    config = {
+      mac: normalizedMac,
+      name: name || 'Bateria Aninerel'
+    };
+
+    boat.aninerelDevices.push(config);
+  }
+
+  save(db);
+
+  return config;
+}
+
+
+export function getAninerelDeviceConfig(boatId, mac) {
+  const boat = getBoat(boatId);
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  return (boat.aninerelDevices || []).find(
+    d => d.mac === normalizedMac
+  ) || null;
+}
+
+
+/**
+ * Desa la lectura més recent d'un BMS Aninerel com un 'device' més del
+ * vaixell, creant-lo si encara no existeix. Mateix patró exacte que
+ * updateVictronReading().
+ */
+export function updateAninerelReading(boatId, mac, status) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let device = boat.devices.find(
+    d => d.source === 'aninerel' && d.mac === normalizedMac
+  );
+
+  if (!device) {
+    const config = (boat.aninerelDevices || []).find(
+      d => d.mac === normalizedMac
+    );
+
+    device = {
+      id: `device-aninerel-${normalizedMac.replace(/:/g, '')}`,
+      name: config?.name || 'Bateria Aninerel',
+      type: 'device',
+      source: 'aninerel',
+      mac: normalizedMac,
+      tuya_device_id: null,
+      params: {},
+    };
+
+    boat.devices.push(device);
+  }
+
+  device.lastUpdate = new Date().toISOString();
+  device.status = status;
+
+  save(db);
+
+  return device;
+}
+
+
+// ─────────────────────────────────────────────
+// RENOGY DC-DC (BLE GATT actiu via ESP32 gateway, Modbus RTU)
+// ─────────────────────────────────────────────
+//
+// Mateix esperit que Aninerel: connexió GATT activa des de l'ESP32, que
+// envia la comanda de lectura (construïda amb renogyDecoder.js) i
+// reenvia en cru la resposta rebuda. Un únic dispositiu Renogy pel
+// Juriola (RBC40D1U-G3), però es guarda com a llista per si mai cal
+// afegir-ne més.
+//
+
+export function configureRenogyDevice(
+  boatId,
+  { mac, name }
+) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  if (!Array.isArray(boat.renogyDevices)) {
+    boat.renogyDevices = [];
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let config = boat.renogyDevices.find(
+    d => d.mac === normalizedMac
+  );
+
+  if (config) {
+    config.name = name || config.name;
+  } else {
+    config = {
+      mac: normalizedMac,
+      name: name || 'Renogy DC-DC'
+    };
+
+    boat.renogyDevices.push(config);
+  }
+
+  save(db);
+
+  return config;
+}
+
+
+export function getRenogyDeviceConfig(boatId, mac) {
+  const boat = getBoat(boatId);
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  return (boat.renogyDevices || []).find(
+    d => d.mac === normalizedMac
+  ) || null;
+}
+
+
+/**
+ * Desa la lectura més recent d'un Renogy DC-DC com un 'device' més del
+ * vaixell, creant-lo si encara no existeix. Mateix patró que
+ * updateAninerelReading()/updateVictronReading().
+ */
+export function updateRenogyReading(boatId, mac, status) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let device = boat.devices.find(
+    d => d.source === 'renogy' && d.mac === normalizedMac
+  );
+
+  if (!device) {
+    const config = (boat.renogyDevices || []).find(
+      d => d.mac === normalizedMac
+    );
+
+    device = {
+      id: `device-renogy-${normalizedMac.replace(/:/g, '')}`,
+      name: config?.name || 'Renogy DC-DC',
+      type: 'device',
+      source: 'renogy',
+      mac: normalizedMac,
+      tuya_device_id: null,
+      params: {},
+    };
+
+    boat.devices.push(device);
+  }
+
+  device.lastUpdate = new Date().toISOString();
+  device.status = status;
+
+  save(db);
+
+  return device;
+}
+
+
+// ─────────────────────────────────────────────
 // UID TUYA (per vaixell/client)
 // ─────────────────────────────────────────────
 //
@@ -686,6 +922,268 @@ export function getVictronInstruments(boatId) {
 }
 
 
+// ─────────────────────────────────────────────
+// CAMPS ANINEREL BMS (per generar instruments i llegir l'estat)
+// ─────────────────────────────────────────────
+//
+// Mateix patró que VICTRON_FIELDS_BY_KIND: un únic "kind" (aninerel_bms)
+// amb els camps escalars que interessa poder afegir com a gadget. Els
+// arrays (cellVoltages, temperatures) es desglossen en camps individuals
+// (cell1, cell2..., temp1, temp2...) perquè cada un es pugui afegir com
+// a instrument independent, igual que fem amb Tuya.
+
+export const ANINEREL_FIELDS = [
+  { code: 'current', unit: 'A', label: 'Corrent' },
+  { code: 'packVoltage', unit: 'V', label: 'Voltatge total' },
+  { code: 'soc', unit: '%', label: 'Estat de càrrega (SOC)' },
+  { code: 'soh', unit: '%', label: 'Salut de la bateria (SOH)' },
+  { code: 'remainingCapacity', unit: 'Ah', label: 'Capacitat restant' },
+  { code: 'ratedCapacity', unit: 'Ah', label: 'Capacitat nominal' },
+  { code: 'cycles', unit: '', label: 'Cicles' },
+];
+
+// Nombre màxim de cel·les/sensors de temperatura pels quals generem
+// camps individuals (cell1..cell4, temp1..temp2) — coincideix amb el
+// que hem confirmat als packs de 4 cel·les del Juriola.
+const ANINEREL_MAX_CELLS = 4;
+const ANINEREL_MAX_TEMPS = 2;
+
+
+/**
+ * Converteix l'últim estat desat d'un BMS Aninerel (device.status, tal
+ * com el desa updateAninerelReading) en la mateixa forma [{code, value}]
+ * que ja retornen Tuya i Victron.
+ */
+export function getAninerelDeviceStatusItems(device) {
+  const status = device?.status;
+
+  if (!status || status.kind !== 'aninerel_bms') {
+    return [];
+  }
+
+  const items = [];
+
+  for (const field of ANINEREL_FIELDS) {
+    if (status[field.code] !== undefined && status[field.code] !== null) {
+      items.push({ code: field.code, value: status[field.code] });
+    }
+  }
+
+  (status.cellVoltages || []).forEach((v, i) => {
+    if (i < ANINEREL_MAX_CELLS) {
+      items.push({ code: `cell${i + 1}`, value: v });
+    }
+  });
+
+  (status.temperatures || []).forEach((v, i) => {
+    if (i < ANINEREL_MAX_TEMPS) {
+      items.push({ code: `temp${i + 1}`, value: v });
+    }
+  });
+
+  return items;
+}
+
+
+// Un BMS Aninerel es considera "online" amb el mateix criteri que
+// Victron: lectura rebuda en els últims 5 minuts.
+function isAninerelDeviceOnline(device) {
+  if (!device.lastUpdate) {
+    return false;
+  }
+
+  const ageMs = Date.now() - new Date(device.lastUpdate).getTime();
+  return ageMs >= 0 && ageMs < VICTRON_ONLINE_THRESHOLD_MS;
+}
+
+
+/**
+ * Instruments (capacitats afegibles) generats des dels BMS Aninerel ja
+ * coneguts d'un vaixell (una entrada per bateria: Babord, Estribord...).
+ */
+export function getAninerelInstruments(boatId) {
+  const devices = getDevices(boatId) || [];
+  const instruments = [];
+
+  for (const device of devices) {
+    if (device.source !== 'aninerel') {
+      continue;
+    }
+
+    const status = device.status;
+    if (!status || status.kind !== 'aninerel_bms') {
+      continue;
+    }
+
+    const online = isAninerelDeviceOnline(device);
+
+    for (const field of ANINEREL_FIELDS) {
+      if (status[field.code] === undefined || status[field.code] === null) {
+        continue;
+      }
+
+      instruments.push({
+        id: `${device.id}:${field.code}`,
+        source: 'aninerel',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: field.code,
+        type: 'valor',
+        unit: field.unit,
+        value: status[field.code],
+        online,
+        title: `${device.name} · ${field.label}`,
+      });
+    }
+
+    (status.cellVoltages || []).forEach((v, i) => {
+      if (i >= ANINEREL_MAX_CELLS) return;
+
+      instruments.push({
+        id: `${device.id}:cell${i + 1}`,
+        source: 'aninerel',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: `cell${i + 1}`,
+        type: 'valor',
+        unit: 'mV',
+        value: v,
+        online,
+        title: `${device.name} · Cel·la ${i + 1}`,
+      });
+    });
+
+    (status.temperatures || []).forEach((v, i) => {
+      if (i >= ANINEREL_MAX_TEMPS) return;
+
+      instruments.push({
+        id: `${device.id}:temp${i + 1}`,
+        source: 'aninerel',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: `temp${i + 1}`,
+        type: 'temperatura',
+        unit: '°C',
+        value: v,
+        online,
+        title: `${device.name} · Temperatura ${i + 1}`,
+      });
+    });
+  }
+
+  return instruments;
+}
+
+
+// ─────────────────────────────────────────────
+// CAMPS RENOGY DC-DC (per generar instruments i llegir l'estat)
+// ─────────────────────────────────────────────
+//
+// Mateix patró que ANINEREL_FIELDS/VICTRON_FIELDS_BY_KIND: un únic
+// "kind" (renogy_dcdc) amb els camps escalars que interessa poder
+// afegir com a gadget.
+
+export const RENOGY_FIELDS = [
+  { code: 'soc', unit: '%', label: 'Estat de càrrega (SOC)' },
+  { code: 'packVoltage', unit: 'V', label: 'Voltatge bateria' },
+  { code: 'chargingCurrent', unit: 'A', label: 'Corrent de càrrega' },
+  { code: 'controllerTemp', unit: '°C', label: 'Temperatura controlador' },
+  { code: 'batteryTemp', unit: '°C', label: 'Temperatura bateria' },
+  { code: 'loadVoltage', unit: 'V', label: 'Voltatge consum' },
+  { code: 'loadCurrent', unit: 'A', label: 'Corrent consum' },
+  { code: 'loadPower', unit: 'W', label: 'Potència consum' },
+  { code: 'pvVoltage', unit: 'V', label: 'Voltatge PV' },
+  { code: 'pvCurrent', unit: 'A', label: 'Corrent PV' },
+  { code: 'chargingPower', unit: 'W', label: 'Potència de càrrega' },
+  { code: 'todayMinVoltage', unit: 'V', label: 'Voltatge mínim avui' },
+  { code: 'todayMaxVoltage', unit: 'V', label: 'Voltatge màxim avui' },
+];
+
+
+/**
+ * Converteix l'últim estat desat d'un Renogy (device.status, tal com el
+ * desa updateRenogyReading) en la mateixa forma [{code, value}] que ja
+ * retornen Tuya, Victron i Aninerel.
+ */
+export function getRenogyDeviceStatusItems(device) {
+  const status = device?.status;
+
+  if (!status || status.kind !== 'renogy_dcdc') {
+    return [];
+  }
+
+  const items = [];
+
+  for (const field of RENOGY_FIELDS) {
+    if (status[field.code] !== undefined && status[field.code] !== null) {
+      items.push({ code: field.code, value: status[field.code] });
+    }
+  }
+
+  return items;
+}
+
+
+// Un Renogy es considera "online" amb el mateix criteri que Victron/
+// Aninerel: lectura rebuda en els últims 5 minuts.
+function isRenogyDeviceOnline(device) {
+  if (!device.lastUpdate) {
+    return false;
+  }
+
+  const ageMs = Date.now() - new Date(device.lastUpdate).getTime();
+  return ageMs >= 0 && ageMs < VICTRON_ONLINE_THRESHOLD_MS;
+}
+
+
+/**
+ * Instruments (capacitats afegibles) generats des dels Renogy ja
+ * coneguts d'un vaixell.
+ */
+export function getRenogyInstruments(boatId) {
+  const devices = getDevices(boatId) || [];
+  const instruments = [];
+
+  for (const device of devices) {
+    if (device.source !== 'renogy') {
+      continue;
+    }
+
+    const status = device.status;
+    if (!status || status.kind !== 'renogy_dcdc') {
+      continue;
+    }
+
+    const online = isRenogyDeviceOnline(device);
+
+    for (const field of RENOGY_FIELDS) {
+      if (status[field.code] === undefined || status[field.code] === null) {
+        continue;
+      }
+
+      instruments.push({
+        id: `${device.id}:${field.code}`,
+        source: 'renogy',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: field.code,
+        type: field.code.toLowerCase().includes('temp') ? 'temperatura' : 'valor',
+        unit: field.unit,
+        value: status[field.code],
+        online,
+        title: `${device.name} · ${field.label}`,
+      });
+    }
+  }
+
+  return instruments;
+}
+
+
 export function getLocalInstruments(
   boatId
 ) {
@@ -695,7 +1193,11 @@ export function getLocalInstruments(
     return null;
   }
 
-  const instruments = getVictronInstruments(boatId);
+  const instruments = [
+    ...getVictronInstruments(boatId),
+    ...getAninerelInstruments(boatId),
+    ...getRenogyInstruments(boatId),
+  ];
 
   for (const device of devices) {
 
@@ -734,7 +1236,7 @@ export function getLocalInstruments(
           '°C',
 
         title:
-          `${device.name} · Temperatura`
+          device.name
       });
     }
 
@@ -765,7 +1267,7 @@ export function getLocalInstruments(
           '%',
 
         title:
-          `${device.name} · Humitat`
+          device.name
       });
     }
 
@@ -796,7 +1298,7 @@ export function getLocalInstruments(
           '',
 
         title:
-          `${device.name} · Interruptor`
+          device.name
       });
     }
   }
@@ -843,32 +1345,11 @@ function overlaps(a, b) {
 // Troba la primera cel·la lliure (d'esquerra a dreta,
 // de dalt a baix) on hi càpiga un gadget colSpan x rowSpan
 // sense sortir de la graella ni xocar amb cap altre gadget.
-//
-// IMPORTANT: una fila que ja tingui algun gadget d'un ALTRE
-// device_id es descarta sencera (encara que hi quedin columnes
-// buides). Si no es fes així, un dispositiu amb menys valors que
-// columnes (p. ex. un Voltímetre amb 3 valors en una graella de 4)
-// deixava un forat que s'omplia amb el primer valor del següent
-// dispositiu afegit — barrejant dos dispositius a la mateixa fila i
-// fent que el requadre visual que els engloba a l'app xoqués amb el
-// de l'altre dispositiu.
 
-function findFreeCell(existingGadgets, colSpan, rowSpan, deviceId) {
+function findFreeCell(existingGadgets, colSpan, rowSpan) {
   const span = Math.min(colSpan, GRID_COLUMNS);
 
   for (let row = 0; ; row++) {
-    const gadgetsInRow = existingGadgets.filter(
-      g => g.row <= row && row < g.row + (g.rowSpan || 1)
-    );
-
-    const rowHasOtherDevice = deviceId != null && gadgetsInRow.some(
-      g => g.device_id != null && g.device_id !== deviceId
-    );
-
-    if (rowHasOtherDevice) {
-      continue;
-    }
-
     for (let col = 0; col <= GRID_COLUMNS - span; col++) {
 
       const candidate = { col, row, colSpan: span, rowSpan };
@@ -948,7 +1429,7 @@ export function addGadget(
 
   const { col, row } = hasPosition
     ? { col: gadget.col, row: gadget.row }
-    : findFreeCell(boat.gadgets, colSpan, rowSpan, gadget.device_id);
+    : findFreeCell(boat.gadgets, colSpan, rowSpan);
 
   const newGadget = {
     id:
