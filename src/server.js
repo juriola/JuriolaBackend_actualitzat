@@ -545,6 +545,17 @@ app.get(
         });
       }
 
+      // Els dispositius BLE (Victron, Aninerel, Renogy) no passen per Tuya
+      // i no tenen cap "report-logs" a consultar — només es desa l'última
+      // lectura (vegeu updateVictronReading/updateRenogyReading a
+      // store.js). Sense aquest cas especial, la crida requeia per
+      // defecte cap a Tuya amb un device_id que no hi existeix, generant
+      // un bombardeig d'errors "permission deny" cada pocs segons i cap
+      // dada per a la gràfica.
+      if (device.source === 'victron' || device.source === 'aninerel' || device.source === 'renogy') {
+        return res.json([]);
+      }
+
       const hours = Math.min(
         Math.max(
           Number(req.query.hours || 6),
