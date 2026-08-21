@@ -1448,20 +1448,9 @@ export function addGadget(
     Number.isInteger(gadget.col) &&
     Number.isInteger(gadget.row);
 
-  // ── DEBUG TEMPORAL ── eliminar un cop diagnosticat el problema de
-  // col·locació automàtica barrejant dispositius.
-  console.log('[DEBUG addGadget] gadget.device_id =', gadget.device_id);
-  console.log('[DEBUG addGadget] hasPosition =', hasPosition, 'gadget.col=', gadget.col, 'gadget.row=', gadget.row);
-  console.log('[DEBUG addGadget] boat.gadgets existents =', JSON.stringify(
-    boat.gadgets.map(g => ({ device_id: g.device_id, col: g.col, row: g.row, colSpan: g.colSpan, rowSpan: g.rowSpan }))
-  ));
-
   const { col, row } = hasPosition
     ? { col: gadget.col, row: gadget.row }
     : findFreeCell(boat.gadgets, colSpan, rowSpan, gadget.device_id);
-
-  console.log('[DEBUG addGadget] resultat triat =', { col, row });
-  // ── FI DEBUG TEMPORAL ──
 
   const newGadget = {
     id:
