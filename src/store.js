@@ -19,7 +19,9 @@ const seed = {
 
       victronDevices: [],
 
-      aninerelDevices: []
+      aninerelDevices: [],
+
+      renogyDevices: []
     }
   ]
 };
@@ -638,6 +640,122 @@ export function updateAninerelReading(boatId, mac, status) {
 
 
 // ─────────────────────────────────────────────
+// RENOGY DC-DC (BLE GATT actiu via ESP32 gateway, Modbus RTU)
+// ─────────────────────────────────────────────
+//
+// Mateix esperit que Aninerel: connexió GATT activa des de l'ESP32, que
+// envia la comanda de lectura (construïda amb renogyDecoder.js) i
+// reenvia en cru la resposta rebuda. Un únic dispositiu Renogy pel
+// Juriola (RBC40D1U-G3), però es guarda com a llista per si mai cal
+// afegir-ne més.
+//
+
+export function configureRenogyDevice(
+  boatId,
+  { mac, name }
+) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  if (!Array.isArray(boat.renogyDevices)) {
+    boat.renogyDevices = [];
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let config = boat.renogyDevices.find(
+    d => d.mac === normalizedMac
+  );
+
+  if (config) {
+    config.name = name || config.name;
+  } else {
+    config = {
+      mac: normalizedMac,
+      name: name || 'Renogy DC-DC'
+    };
+
+    boat.renogyDevices.push(config);
+  }
+
+  save(db);
+
+  return config;
+}
+
+
+export function getRenogyDeviceConfig(boatId, mac) {
+  const boat = getBoat(boatId);
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  return (boat.renogyDevices || []).find(
+    d => d.mac === normalizedMac
+  ) || null;
+}
+
+
+/**
+ * Desa la lectura més recent d'un Renogy DC-DC com un 'device' més del
+ * vaixell, creant-lo si encara no existeix. Mateix patró que
+ * updateAninerelReading()/updateVictronReading().
+ */
+export function updateRenogyReading(boatId, mac, status) {
+  const db = load();
+
+  const boat = db.boats.find(
+    b => b.id === boatId
+  );
+
+  if (!boat) {
+    return null;
+  }
+
+  const normalizedMac = mac.toUpperCase();
+
+  let device = boat.devices.find(
+    d => d.source === 'renogy' && d.mac === normalizedMac
+  );
+
+  if (!device) {
+    const config = (boat.renogyDevices || []).find(
+      d => d.mac === normalizedMac
+    );
+
+    device = {
+      id: `device-renogy-${normalizedMac.replace(/:/g, '')}`,
+      name: config?.name || 'Renogy DC-DC',
+      type: 'device',
+      source: 'renogy',
+      mac: normalizedMac,
+      tuya_device_id: null,
+      params: {},
+    };
+
+    boat.devices.push(device);
+  }
+
+  device.lastUpdate = new Date().toISOString();
+  device.status = status;
+
+  save(db);
+
+  return device;
+}
+
+
+// ─────────────────────────────────────────────
 // UID TUYA (per vaixell/client)
 // ─────────────────────────────────────────────
 //
@@ -960,6 +1078,112 @@ export function getAninerelInstruments(boatId) {
 }
 
 
+// ─────────────────────────────────────────────
+// CAMPS RENOGY DC-DC (per generar instruments i llegir l'estat)
+// ─────────────────────────────────────────────
+//
+// Mateix patró que ANINEREL_FIELDS/VICTRON_FIELDS_BY_KIND: un únic
+// "kind" (renogy_dcdc) amb els camps escalars que interessa poder
+// afegir com a gadget.
+
+export const RENOGY_FIELDS = [
+  { code: 'soc', unit: '%', label: 'Estat de càrrega (SOC)' },
+  { code: 'packVoltage', unit: 'V', label: 'Voltatge bateria' },
+  { code: 'chargingCurrent', unit: 'A', label: 'Corrent de càrrega' },
+  { code: 'controllerTemp', unit: '°C', label: 'Temperatura controlador' },
+  { code: 'batteryTemp', unit: '°C', label: 'Temperatura bateria' },
+  { code: 'loadVoltage', unit: 'V', label: 'Voltatge consum' },
+  { code: 'loadCurrent', unit: 'A', label: 'Corrent consum' },
+  { code: 'loadPower', unit: 'W', label: 'Potència consum' },
+  { code: 'pvVoltage', unit: 'V', label: 'Voltatge PV' },
+  { code: 'pvCurrent', unit: 'A', label: 'Corrent PV' },
+  { code: 'chargingPower', unit: 'W', label: 'Potència de càrrega' },
+  { code: 'todayMinVoltage', unit: 'V', label: 'Voltatge mínim avui' },
+  { code: 'todayMaxVoltage', unit: 'V', label: 'Voltatge màxim avui' },
+];
+
+
+/**
+ * Converteix l'últim estat desat d'un Renogy (device.status, tal com el
+ * desa updateRenogyReading) en la mateixa forma [{code, value}] que ja
+ * retornen Tuya, Victron i Aninerel.
+ */
+export function getRenogyDeviceStatusItems(device) {
+  const status = device?.status;
+
+  if (!status || status.kind !== 'renogy_dcdc') {
+    return [];
+  }
+
+  const items = [];
+
+  for (const field of RENOGY_FIELDS) {
+    if (status[field.code] !== undefined && status[field.code] !== null) {
+      items.push({ code: field.code, value: status[field.code] });
+    }
+  }
+
+  return items;
+}
+
+
+// Un Renogy es considera "online" amb el mateix criteri que Victron/
+// Aninerel: lectura rebuda en els últims 5 minuts.
+function isRenogyDeviceOnline(device) {
+  if (!device.lastUpdate) {
+    return false;
+  }
+
+  const ageMs = Date.now() - new Date(device.lastUpdate).getTime();
+  return ageMs >= 0 && ageMs < VICTRON_ONLINE_THRESHOLD_MS;
+}
+
+
+/**
+ * Instruments (capacitats afegibles) generats des dels Renogy ja
+ * coneguts d'un vaixell.
+ */
+export function getRenogyInstruments(boatId) {
+  const devices = getDevices(boatId) || [];
+  const instruments = [];
+
+  for (const device of devices) {
+    if (device.source !== 'renogy') {
+      continue;
+    }
+
+    const status = device.status;
+    if (!status || status.kind !== 'renogy_dcdc') {
+      continue;
+    }
+
+    const online = isRenogyDeviceOnline(device);
+
+    for (const field of RENOGY_FIELDS) {
+      if (status[field.code] === undefined || status[field.code] === null) {
+        continue;
+      }
+
+      instruments.push({
+        id: `${device.id}:${field.code}`,
+        source: 'renogy',
+        deviceId: device.id,
+        tuyaDeviceId: null,
+        deviceName: device.name,
+        code: field.code,
+        type: field.code.toLowerCase().includes('temp') ? 'temperatura' : 'valor',
+        unit: field.unit,
+        value: status[field.code],
+        online,
+        title: `${device.name} · ${field.label}`,
+      });
+    }
+  }
+
+  return instruments;
+}
+
+
 export function getLocalInstruments(
   boatId
 ) {
@@ -972,6 +1196,7 @@ export function getLocalInstruments(
   const instruments = [
     ...getVictronInstruments(boatId),
     ...getAninerelInstruments(boatId),
+    ...getRenogyInstruments(boatId),
   ];
 
   for (const device of devices) {

@@ -30,7 +30,17 @@ import {
   updateVictronReading,
   waitForPersist,
   getVictronDeviceStatusItems,
-  getVictronInstruments
+  getVictronInstruments,
+  configureAninerelDevice,
+  getAninerelDeviceConfig,
+  updateAninerelReading,
+  getAninerelDeviceStatusItems,
+  getAninerelInstruments,
+  configureRenogyDevice,
+  getRenogyDeviceConfig,
+  updateRenogyReading,
+  getRenogyDeviceStatusItems,
+  getRenogyInstruments
 } from './store.js';
 
 import {
@@ -42,6 +52,8 @@ import {
 } from './tuyaAdapter.js';
 
 import { parseVictronAdvertisement } from './victronDecoder.js';
+import { parseAninerelResponse } from './aninerelDecoder.js';
+import { parseRenogyResponse } from './renogyDecoder.js';
 
 import {
   verifyPassword,
@@ -241,7 +253,7 @@ app.post('/boats', requireAuth, requireAdmin, (req, res) => {
 // "AFEGIR INSTRUMENT"
 //
 // Ara surt dels dispositius coneguts del vaixell.
-// Més endavant hi afegirem Victron i NMEA.
+// Més endavant hi afegirem NMEA.
 //
 
 app.get('/boats/:boatId/instruments', requireAuth, requireBoatAccess, async (req, res) => {
@@ -259,8 +271,10 @@ app.get('/boats/:boatId/instruments', requireAuth, requireBoatAccess, async (req
     // res a mà a la nostra base de dades).
     const tuyaInstruments = await getAvailableInstruments(boat);
     const victronInstruments = getVictronInstruments(boat.id);
+    const aninerelInstruments = getAninerelInstruments(boat.id);
+    const renogyInstruments = getRenogyInstruments(boat.id);
 
-    return res.json([...tuyaInstruments, ...victronInstruments]);
+    return res.json([...tuyaInstruments, ...victronInstruments, ...aninerelInstruments, ...renogyInstruments]);
 
   } catch (e) {
     console.error(e);
@@ -268,7 +282,7 @@ app.get('/boats/:boatId/instruments', requireAuth, requireBoatAccess, async (req
     // Si encara no hi ha credencials Tuya configurades pel
     // vaixell (o falla la crida), fem servir el catàleg local
     // com a fallback perquè el client no es quedi sense res
-    // (ja inclou tant Tuya local com Victron).
+    // (ja inclou tant Tuya local com Victron/Aninerel).
     const fallback = getLocalInstruments(boat.id) || [];
 
     res.json(fallback);
@@ -432,10 +446,19 @@ app.get(
         });
       }
 
-      // Victron: no hi ha cap API a consultar — l'última lectura ja
-      // queda desada localment cada cop que l'ESP32 n'envia una de nova.
+      // Victron/Aninerel: no hi ha cap API a consultar — l'última
+      // lectura ja queda desada localment cada cop que l'ESP32
+      // corresponent n'envia una de nova.
       if (device.source === 'victron') {
         return res.json(getVictronDeviceStatusItems(device));
+      }
+
+      if (device.source === 'aninerel') {
+        return res.json(getAninerelDeviceStatusItems(device));
+      }
+
+      if (device.source === 'renogy') {
+        return res.json(getRenogyDeviceStatusItems(device));
       }
 
       res.json(
@@ -754,6 +777,213 @@ app.get('/boats/:boatId/victron-config/debug', requireAuth, requireBoatAccess, (
     boatId: boat.id,
     victronDevices: boat.victronDevices || [],
   });
+});
+
+
+// ─────────────────────────────────────────────
+// ANINEREL / LANMAO BMS
+// ─────────────────────────────────────────────
+//
+// Mateix esperit que Victron: l'ESP32 gateway (placa separada, connexió
+// GATT activa) no va autenticat amb JWT — es protegeix amb la mateixa
+// clau senzilla per header (es pot reutilitzar VICTRON_GATEWAY_KEY o
+// definir-ne una de pròpia amb ANINEREL_GATEWAY_KEY si es prefereix
+// separar-les).
+//
+
+app.post('/boats/:boatId/aninerel/data', async (req, res) => {
+  const gatewayKey = process.env.ANINEREL_GATEWAY_KEY || process.env.VICTRON_GATEWAY_KEY;
+
+  if (gatewayKey && req.header('x-device-key') !== gatewayKey) {
+    return res.status(401).json({
+      error: 'Clau de dispositiu invàlida'
+    });
+  }
+
+  const { mac, rawData } = req.body || {};
+
+  if (!mac || !rawData) {
+    return res.status(400).json({
+      error: "Cal indicar 'mac' i 'rawData'"
+    });
+  }
+
+  const config = getAninerelDeviceConfig(
+    req.params.boatId,
+    mac
+  );
+
+  if (!config) {
+    return res.status(404).json({
+      error: `Cap BMS Aninerel configurat amb MAC ${mac} per aquest vaixell`
+    });
+  }
+
+  try {
+    const status = parseAninerelResponse(rawData);
+
+    const device = updateAninerelReading(
+      req.params.boatId,
+      mac,
+      status
+    );
+
+    res.json({ ok: true, device: device.id, status });
+
+  } catch (e) {
+    console.error(e);
+
+    res.status(400).json({
+      error: e.message
+    });
+  }
+});
+
+
+// Ruta d'administració: dona d'alta la MAC d'un BMS Aninerel (una per
+// bateria: Babord, Estribord...). A diferència de Victron, aquest BMS
+// no necessita cap clau de desxifratge (la connexió GATT no va xifrada).
+//
+// Exemple:
+// PUT /boats/juriola/aninerel-config
+// { "mac": "A2:60:11:30:09:69", "name": "Babord" }
+
+app.put('/boats/:boatId/aninerel-config', requireAuth, requireBoatAccess, async (req, res) => {
+  const { mac, name } = req.body || {};
+
+  if (!mac) {
+    return res.status(400).json({
+      error: "Cal indicar 'mac'"
+    });
+  }
+
+  const config = configureAninerelDevice(
+    req.params.boatId,
+    { mac, name }
+  );
+
+  if (!config) {
+    return res.status(404).json({
+      error: 'Vaixell no trobat'
+    });
+  }
+
+  // Mateix motiu que a victron-config: confirmar "ok:true" només un cop
+  // l'escriptura a Upstash ha acabat de veritat.
+  try {
+    await waitForPersist();
+  } catch (e) {
+    console.error('[aninerel-config] No s\'ha pogut desar de forma persistent:', e);
+
+    return res.status(502).json({
+      error: 'La configuració s\'ha aplicat en memòria però no s\'ha pogut desar de forma persistent (torna-ho a provar en uns segons)'
+    });
+  }
+
+  res.json({ ok: true, config });
+});
+
+
+// ─────────────────────────────────────────────
+// RENOGY DC-DC
+// ─────────────────────────────────────────────
+//
+// Mateix esperit que Aninerel: connexió GATT activa des de l'ESP32
+// gateway, protegida amb la mateixa clau senzilla per header. A
+// diferència de l'Aninerel, aquí el protocol és Modbus RTU estàndard
+// (documentat públicament), així que la comanda de lectura es pot
+// reconstruir/validar amb renogyDecoder.js sense dependre de bytes
+// capturats fixos.
+//
+
+app.post('/boats/:boatId/renogy/data', async (req, res) => {
+  const gatewayKey = process.env.RENOGY_GATEWAY_KEY || process.env.ANINEREL_GATEWAY_KEY || process.env.VICTRON_GATEWAY_KEY;
+
+  if (gatewayKey && req.header('x-device-key') !== gatewayKey) {
+    return res.status(401).json({
+      error: 'Clau de dispositiu invàlida'
+    });
+  }
+
+  const { mac, rawData } = req.body || {};
+
+  if (!mac || !rawData) {
+    return res.status(400).json({
+      error: "Cal indicar 'mac' i 'rawData'"
+    });
+  }
+
+  const config = getRenogyDeviceConfig(
+    req.params.boatId,
+    mac
+  );
+
+  if (!config) {
+    return res.status(404).json({
+      error: `Cap Renogy configurat amb MAC ${mac} per aquest vaixell`
+    });
+  }
+
+  try {
+    const status = parseRenogyResponse(rawData);
+
+    const device = updateRenogyReading(
+      req.params.boatId,
+      mac,
+      status
+    );
+
+    res.json({ ok: true, device: device.id, status });
+
+  } catch (e) {
+    console.error(e);
+
+    res.status(400).json({
+      error: e.message
+    });
+  }
+});
+
+
+// Ruta d'administració: dona d'alta la MAC d'un Renogy DC-DC. Igual que
+// l'Aninerel, no cal cap clau de xifratge (la connexió GATT no va
+// xifrada).
+//
+// Exemple:
+// PUT /boats/juriola/renogy-config
+// { "mac": "7C:72:E7:2F:B8:C7", "name": "Renogy DC-DC" }
+
+app.put('/boats/:boatId/renogy-config', requireAuth, requireBoatAccess, async (req, res) => {
+  const { mac, name } = req.body || {};
+
+  if (!mac) {
+    return res.status(400).json({
+      error: "Cal indicar 'mac'"
+    });
+  }
+
+  const config = configureRenogyDevice(
+    req.params.boatId,
+    { mac, name }
+  );
+
+  if (!config) {
+    return res.status(404).json({
+      error: 'Vaixell no trobat'
+    });
+  }
+
+  try {
+    await waitForPersist();
+  } catch (e) {
+    console.error('[renogy-config] No s\'ha pogut desar de forma persistent:', e);
+
+    return res.status(502).json({
+      error: 'La configuració s\'ha aplicat en memòria però no s\'ha pogut desar de forma persistent (torna-ho a provar en uns segons)'
+    });
+  }
+
+  res.json({ ok: true, config });
 });
 
 
