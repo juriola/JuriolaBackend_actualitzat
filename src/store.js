@@ -1345,11 +1345,32 @@ function overlaps(a, b) {
 // Troba la primera cel·la lliure (d'esquerra a dreta,
 // de dalt a baix) on hi càpiga un gadget colSpan x rowSpan
 // sense sortir de la graella ni xocar amb cap altre gadget.
+//
+// IMPORTANT: una fila que ja tingui algun gadget d'un ALTRE
+// device_id es descarta sencera (encara que hi quedin columnes
+// buides). Si no es fes així, un dispositiu amb menys valors que
+// columnes (p. ex. un Voltímetre amb 3 valors en una graella de 4)
+// deixava un forat que s'omplia amb el primer valor del següent
+// dispositiu afegit — barrejant dos dispositius a la mateixa fila i
+// fent que el requadre visual que els engloba a l'app xoqués amb el
+// de l'altre dispositiu.
 
-function findFreeCell(existingGadgets, colSpan, rowSpan) {
+function findFreeCell(existingGadgets, colSpan, rowSpan, deviceId) {
   const span = Math.min(colSpan, GRID_COLUMNS);
 
   for (let row = 0; ; row++) {
+    const gadgetsInRow = existingGadgets.filter(
+      g => g.row <= row && row < g.row + (g.rowSpan || 1)
+    );
+
+    const rowHasOtherDevice = deviceId != null && gadgetsInRow.some(
+      g => g.device_id != null && g.device_id !== deviceId
+    );
+
+    if (rowHasOtherDevice) {
+      continue;
+    }
+
     for (let col = 0; col <= GRID_COLUMNS - span; col++) {
 
       const candidate = { col, row, colSpan: span, rowSpan };
@@ -1429,7 +1450,7 @@ export function addGadget(
 
   const { col, row } = hasPosition
     ? { col: gadget.col, row: gadget.row }
-    : findFreeCell(boat.gadgets, colSpan, rowSpan);
+    : findFreeCell(boat.gadgets, colSpan, rowSpan, gadget.device_id);
 
   const newGadget = {
     id:
